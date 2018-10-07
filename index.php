@@ -22,5 +22,6 @@ if($type == 'profiles') {
   $json = json_decode(file_get_contents('http://api.steampowered.com/ISteamUser/ResolveVanityURL/v0001/?key=DB3924CFFCBD62DF56A4C109BC806985&vanityurl='.$id));
   dUrlRedirect($json->response->steamid);
 } else {
+  header('Location: https://steamcommunity.com');
   die('Not supported url type: '. $type. '. Please use full steamcommunity url.');
 }
