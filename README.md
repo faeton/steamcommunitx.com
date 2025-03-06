@@ -37,15 +37,16 @@ https://www.dotabuff.com/players/{dotaID}
 - Navigate to **Settings** → **Variables and Secrets**
 - Add a **Secret**:
   - **Name:** `STEAM_API_KEY`
-  - **Value:** *Your Steam API Key*
+  - **Value:** *Steam API Key*
 
 ### 3. Bind Custom Domain (Optional)
 To use a custom domain like `steamcommunitx.com`, configure Cloudflare DNS settings and map the domain to the worker.
 
 ## Code Breakdown
 ### Key Files:
-- **`index.js`**: The main Cloudflare Worker script that handles requests, processes Steam IDs, and redirects.
-- **`README.md`**: This documentation.
+- **`worker.js`**: The main Cloudflare Worker script that handles requests, processes Steam IDs, and redirects.
+- **`index.php`**: Vanilla initial php code example back in 2017.
+- **`README.md`**: This doc.
 
 ### Optimized Redirect Logic
 - Uses `window.onload` to ensure all tracking scripts load before redirecting.
