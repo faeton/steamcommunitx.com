@@ -1,3 +1,15 @@
 name = "steamcommunitx"
 main = "worker.js"
-compatibility_date = "2025-01-01"
+compatibility_date = "2026-05-09"
+
+routes = [
+  { pattern = "steamcommunitx.com/*", zone_name = "steamcommunitx.com" }
+]
+
+[[kv_namespaces]]
+binding = "STEAM_ID_CACHE"
+id = "3ddd6b06496d482a9cd55a9d6079e753"
+
+[observability.logs]
+enabled = true
+invocation_logs = false
