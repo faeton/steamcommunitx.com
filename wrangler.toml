@@ -8,9 +8,8 @@ routes = [
 
 [vars]
 GA_ID = "G-5ZTR404EG7"
-# To enable Matomo, uncomment and set both:
-# MATOMO_URL = "//your-matomo-host/"
-# MATOMO_SITE_ID = "1"
+MATOMO_URL = "//m.unt1.com/"
+MATOMO_SITE_ID = "3"
 
 [[kv_namespaces]]
 binding = "STEAM_ID_CACHE"
