@@ -45,8 +45,9 @@ To use a custom domain like `steamcommunitx.com`, configure Cloudflare DNS setti
 ## Code Breakdown
 ### Key Files:
 - **`worker.js`**: The main Cloudflare Worker script that handles requests, processes Steam IDs, and redirects.
-- **`index.php`**: Vanilla initial php code example back in 2017.
 - **`README.md`**: This doc.
+
+> The original 2017 PHP prototype is preserved on the [`legacy-php-2017`](https://github.com/faeton/steamcommunitx.com/tree/legacy-php-2017) branch for historical reference.
 
 ### Optimized Redirect Logic
 - Uses `window.onload` to ensure all tracking scripts load before redirecting.
