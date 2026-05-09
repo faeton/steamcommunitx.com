@@ -1,1 +1,5 @@
 vendor/
+.wrangler/
+node_modules/
+.dev.vars
+.env
