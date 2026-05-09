@@ -345,91 +345,195 @@ export function analyticsSnippet(env) {
   return parts.join('\n');
 }
 
+const REPO_URL = "https://github.com/faeton/steamcommunitx.com";
+
 function indexPage(hostname, analytics = '') {
   const host = hostname.split('/')[0];
+  const examples = [
+    { from: 'steamcommunity.com/id/username',                  to: `${host}/id/username`,                  label: 'Vanity URL' },
+    { from: 'steamcommunity.com/profiles/76561198123456789',   to: `${host}/profiles/76561198123456789`,   label: 'SteamID64' },
+    { from: 'steamcommunity.com/profiles/[U:1:123456789]',     to: `${host}/profiles/[U:1:123456789]`,     label: 'SteamID3' }
+  ];
+  const exampleCards = examples.map(e => `
+        <article class="ex">
+          <div class="ex-label">${e.label}</div>
+          <div class="ex-row">
+            <code class="ex-from">${e.from}</code>
+            <svg class="ex-arrow" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M4 11h12.17l-5.59-5.59L12 4l8 8-8 8-1.41-1.41L16.17 13H4z"/></svg>
+            <code class="ex-to">${e.to}</code>
+          </div>
+        </article>`).join('');
   return `<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Steam to Dotabuff Redirector</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Steam → Dotabuff Redirector</title>
+  <meta name="description" content="Drop-in replacement for steamcommunity.com that redirects any Steam profile URL straight to the matching Dotabuff player page.">
   ${analytics}
   <style>
-    ${getCommonStyles()}
-    /* Enhanced index page styling */
-    .hero {
-      text-align: center;
-      padding: 60px 20px;
-      background: linear-gradient(135deg, rgba(28,36,45,0.9) 0%, rgba(40,50,60,0.9) 100%);
-      border-radius: 10px;
+    :root {
+      --bg: #0f1620;
+      --bg-2: #182230;
+      --surface: #1c2530;
+      --surface-2: #232f3e;
+      --border: #2a3848;
+      --text: #e6edf3;
+      --muted: #8b9bac;
+      --accent: #66c0f4;
+      --accent-2: #4aa3d9;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background:
+        radial-gradient(ellipse at top, rgba(102,192,244,0.08), transparent 60%),
+        radial-gradient(ellipse at bottom right, rgba(102,192,244,0.05), transparent 50%),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 64px 20px 48px; }
+    header.hero { text-align: center; margin-bottom: 56px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: rgba(102,192,244,0.1);
+      border: 1px solid rgba(102,192,244,0.25);
+      border-radius: 999px;
+      margin-bottom: 20px;
+    }
+    h1 {
+      font-size: clamp(2rem, 5vw, 3rem);
+      line-height: 1.15;
+      margin: 0 0 16px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text);
+    }
+    h1 .accent { color: var(--accent); }
+    .tagline { font-size: 1.1rem; color: var(--muted); max-width: 520px; margin: 0 auto; }
+
+    section.examples { display: grid; gap: 12px; margin-bottom: 40px; }
+    .ex {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      transition: border-color 0.15s ease, transform 0.15s ease;
+    }
+    .ex:hover { border-color: var(--accent-2); }
+    .ex-label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+    .ex-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .ex code {
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 0.9rem;
+      padding: 6px 10px;
+      border-radius: 6px;
+      word-break: break-all;
+      flex: 1 1 240px;
+    }
+    .ex-from { background: var(--bg-2); color: var(--muted); }
+    .ex-to   { background: rgba(102,192,244,0.12); color: var(--accent); border: 1px solid rgba(102,192,244,0.25); }
+    .ex-arrow { color: var(--muted); flex-shrink: 0; }
+
+    .how {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 24px;
       margin-bottom: 40px;
     }
-    .hero h1 {
-      font-size: 2.5em;
-      margin-bottom: 20px;
-      color: #66c0f4;
+    .how h2 { margin: 0 0 8px; font-size: 1rem; color: var(--accent); letter-spacing: 0.04em; text-transform: uppercase; }
+    .how p { margin: 0; color: var(--muted); font-size: 0.95rem; }
+    .how strong { color: var(--text); font-weight: 600; }
+
+    footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.875rem;
     }
-    .hero p {
-      font-size: 1.2em;
-      color: #c6d4df;
+    footer a {
+      color: var(--muted);
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: color 0.15s ease;
     }
-    .info {
-      background: rgba(40, 50, 60, 0.8);
-      padding: 20px;
+    footer a:hover { color: var(--accent); }
+    .gh-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
       border-radius: 8px;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-      margin-bottom: 20px;
+      color: var(--text);
+      font-weight: 500;
+      transition: border-color 0.15s ease, transform 0.15s ease;
     }
-    .url-example {
-      font-family: monospace;
-      background: rgb(28,36,45);
-      padding: 8px 12px;
-      border-radius: 4px;
-      display: inline-block;
-      color: #66c0f4;
-      margin: 5px 0;
-    }
-    .change-to {
-      text-align: center;
-      font-size: 1em;
-      margin: 10px 0;
-      color: #8f98a0;
-      font-weight: bold;
-    }
-    .footer {
-      text-align: center;
-      margin-top: 40px;
-      font-size: 0.9em;
-      color: #8f98a0;
+    .gh-badge:hover { border-color: var(--accent); color: var(--accent); transform: translateY(-1px); }
+
+    @media (max-width: 480px) {
+      .wrap { padding: 40px 16px 32px; }
+      header.hero { margin-bottom: 36px; }
+      .ex-row { gap: 8px; }
+      .ex-arrow { transform: rotate(90deg); margin: 4px auto; }
+      footer { justify-content: center; text-align: center; }
     }
   </style>
 </head>
 <body>
-  <div class="hero">
-    <h1>Steam to Dotabuff Redirector</h1>
-    <p>Effortlessly convert your Steam profile URL into a Dotabuff player profile.</p>
-  </div>
-  <div class="info">
-    <p><strong>How to use:</strong></p>
-    <div>
-      <span class="url-example">steamcommunity.com/id/username</span>
-      <div class="change-to">CHANGE TO:</div>
-      <span class="url-example">${host}/id/username</span>
-    </div>
-    <br>
-    <p><strong>Supports multiple Steam ID formats:</strong></p>
-    <div>
-      <span class="url-example">steamcommunity.com/profiles/76561198123456789</span>
-      <div class="change-to">CHANGE TO:</div>
-      <span class="url-example">${host}/profiles/76561198123456789</span>
-    </div>
-    <br>
-    <div>
-      <span class="url-example">steamcommunity.com/profiles/[U:1:123456789]</span>
-      <div class="change-to">CHANGE TO:</div>
-      <span class="url-example">${host}/profiles/[U:1:123456789]</span>
-    </div>
-  </div>
-  <div class="footer">
-    Developed by <a href="https://github.com/faeton" target="_blank">GitHub/faeton</a>
+  <div class="wrap">
+    <header class="hero">
+      <span class="pill">Steam → Dotabuff</span>
+      <h1>One-line redirect to <span class="accent">Dotabuff</span></h1>
+      <p class="tagline">Swap <code style="color:var(--accent)">steamcommunity.com</code> for <code style="color:var(--accent)">${host}</code> in any Steam profile URL — get sent straight to the matching Dotabuff page.</p>
+    </header>
+
+    <section class="examples" aria-label="URL conversion examples">${exampleCards}
+    </section>
+
+    <section class="how">
+      <h2>How it works</h2>
+      <p>Vanity URLs are resolved through the Steam Web API and cached. SteamID64 and SteamID3 formats are converted locally — no API call needed.</p>
+    </section>
+
+    <footer>
+      <span>MIT licensed · Cloudflare Worker</span>
+      <a class="gh-badge" href="${REPO_URL}" target="_blank" rel="noopener">
+        <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+        View on GitHub
+      </a>
+    </footer>
   </div>
 </body>
 </html>`;
