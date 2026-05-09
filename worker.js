@@ -1,9 +1,23 @@
 // Helper functions for API key management
-function getAvailableApiKeys(env) {
+function getConfiguredApiKeys(env) {
   const primaryKey = env.STEAM_API_KEY;
   const multiKeys = env.STEAM_API_KEYS ? env.STEAM_API_KEYS.split(',') : [];
   const allKeys = primaryKey ? [primaryKey, ...multiKeys] : multiKeys;
-  return [...new Set(allKeys)].filter(key => key && key.trim() !== '');
+  return [...new Set(allKeys.map(k => (k || '').trim()).filter(Boolean))];
+}
+
+async function getAvailableApiKeys(env) {
+  const keys = getConfiguredApiKeys(env);
+  if (!env.API_KEY_STATUS || keys.length <= 1) return keys;
+  const statuses = await Promise.all(keys.map(async k => {
+    const [invalid, ratelimited] = await Promise.all([
+      env.API_KEY_STATUS.get(`key:${k}:invalid`),
+      env.API_KEY_STATUS.get(`key:${k}:ratelimited`)
+    ]);
+    return { key: k, healthy: !invalid && !ratelimited };
+  }));
+  const healthy = statuses.filter(s => s.healthy).map(s => s.key);
+  return healthy.length ? healthy : keys;
 }
 
 function maskApiKey(key) {
@@ -54,69 +68,7 @@ export default {
 
 const base = "https://www.dotabuff.com/";
 
-// Multi-tiered rate limiting with retry logic
-async function checkRateLimit(env, ip, resource = 'steam_api') {
-  if (!env.RATE_LIMITS) return { limited: false };
-  const now = Date.now();
-  const windows = [
-    { name: 'minute', size: 60 * 1000, maxRequests: 30 },
-    { name: '5min', size: 5 * 60 * 1000, maxRequests: 180 }
-  ];
-  const results = await Promise.all(windows.map(async window => {
-    const key = `ratelimit:${resource}:${ip}:${window.name}`;
-    try {
-      let data = await env.RATE_LIMITS.get(key, { type: 'json' });
-      if (!data) {
-        data = { count: 0, reset: now + window.size, timestamps: [] };
-      }
-      if (data.timestamps) {
-        data.timestamps = data.timestamps.filter(ts => (now - ts) < window.size);
-      }
-      if (now > data.reset) {
-        data = { count: 0, reset: now + window.size, timestamps: [] };
-      }
-      if (data.timestamps) {
-        data.timestamps.push(now);
-      }
-      data.count += 1;
-      const limited = data.count > window.maxRequests;
-      await env.RATE_LIMITS.put(key, JSON.stringify(data), { expirationTtl: Math.ceil(window.size / 1000) * 2 });
-      return {
-        windowName: window.name,
-        limited,
-        count: data.count,
-        remaining: Math.max(0, window.maxRequests - data.count),
-        reset: data.reset,
-        retryAfter: Math.ceil((data.reset - now) / 1000)
-      };
-    } catch (error) {
-      console.error(`Rate limit error for ${window.name}:`, error);
-      return { windowName: window.name, limited: false };
-    }
-  }));
-  const limitedWindow = results.find(r => r.limited);
-  if (limitedWindow) {
-    return {
-      limited: true,
-      windowName: limitedWindow.windowName,
-      remaining: 0,
-      reset: limitedWindow.reset,
-      retryAfter: limitedWindow.retryAfter,
-      allWindows: results
-    };
-  }
-  const mostRestrictive = results.reduce((prev, curr) => (curr.remaining < prev.remaining ? curr : prev));
-  return {
-    limited: false,
-    windowName: mostRestrictive.windowName,
-    remaining: mostRestrictive.remaining,
-    reset: mostRestrictive.reset,
-    retryAfter: 0,
-    allWindows: results
-  };
-}
-
-async function getId(vanityUrl, env, clientIP) {
+async function getId(vanityUrl, env) {
   const normalizedVanity = vanityUrl.toLowerCase().trim();
   const cacheKey = `steamid:${normalizedVanity}`;
   try {
@@ -130,19 +82,9 @@ async function getId(vanityUrl, env, clientIP) {
   } catch (e) {
     console.error("Cache read error:", e);
   }
-  const apiKeys = getAvailableApiKeys(env);
+  const apiKeys = await getAvailableApiKeys(env);
   if (!apiKeys || apiKeys.length === 0) {
     throw { status: 503, message: "Steam API service unavailable - No API keys configured" };
-  }
-  const rateLimitCheck = await checkRateLimit(env, clientIP);
-  if (rateLimitCheck.limited) {
-    console.log(`Rate limited in ${rateLimitCheck.windowName} window. Retry after ${rateLimitCheck.retryAfter}s`);
-    throw {
-      status: 429,
-      message: "Too Many Requests",
-      retryAfter: rateLimitCheck.retryAfter,
-      windowName: rateLimitCheck.windowName
-    };
   }
   const fetchWithRetry = async (retries = 2, backoff = 1000, keyIndex = 0) => {
     if (keyIndex >= apiKeys.length) {
@@ -252,7 +194,6 @@ async function handleRequest(request, env) {
   if (pathname === '/favicon.ico') {
     return handleFavicon();
   }
-  const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
   if (pathname === '/') {
     return new Response(indexPage(hostname), {
       status: 200,
@@ -268,7 +209,7 @@ async function handleRequest(request, env) {
   try {
     linkid = decodeURIComponent(linkid);
     if (linktype === 'id') {
-      linkid = await getId(linkid, env, clientIP);
+      linkid = await getId(linkid, env);
       if (!linkid) {
         return new Response(
           errorPage(hostname, 404, "Profile Not Found", "We could not find a valid Steam ID for the provided URL."),
