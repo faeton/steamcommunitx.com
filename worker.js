@@ -1,5 +1,5 @@
 // Helper functions for API key management
-function getConfiguredApiKeys(env) {
+export function getConfiguredApiKeys(env) {
   const primaryKey = env.STEAM_API_KEY;
   const multiKeys = env.STEAM_API_KEYS ? env.STEAM_API_KEYS.split(',') : [];
   const allKeys = primaryKey ? [primaryKey, ...multiKeys] : multiKeys;
@@ -92,7 +92,7 @@ async function getId(vanityUrl, env) {
       backoff = backoff * 2;
     }
     const apiKey = apiKeys[keyIndex];
-    const url = `https://api.steampowered.com/ISteamUser/ResolveVanityURL/v0001/?key=${apiKey}&vanityurl=${normalizedVanity}`;
+    const url = `https://api.steampowered.com/ISteamUser/ResolveVanityURL/v0001/?key=${encodeURIComponent(apiKey)}&vanityurl=${encodeURIComponent(normalizedVanity)}`;
     console.log(`Trying API request with key index ${keyIndex}`);
     try {
       const response = await fetch(url, {
@@ -168,7 +168,7 @@ async function getId(vanityUrl, env) {
   return fetchWithRetry();
 }
 
-function convertToDota2Id(steamId) {
+export function convertToDota2Id(steamId) {
   const cleanId = steamId.trim();
   if (/^\[U:1:\d+\]$/.test(cleanId)) {
     const match = cleanId.match(/\[U:1:(\d+)\]/);
@@ -188,44 +188,63 @@ function convertToDota2Id(steamId) {
   return null;
 }
 
+// Pure router: classifies a request pathname.
+// Returns one of:
+//   { kind: 'favicon' }
+//   { kind: 'home' }
+//   { kind: 'redirect-base' }              — empty linktype/linkid
+//   { kind: 'unknown', linktype, linkid }  — linktype not in whitelist
+//   { kind: 'id' | 'profiles', value }     — recognized route, value is decoded
+export function parseRoute(pathname) {
+  if (pathname === '/favicon.ico') return { kind: 'favicon' };
+  if (pathname === '/') return { kind: 'home' };
+  const cleanPath = pathname.replace(/\/+$/, '');
+  const [, linktype, ...rest] = cleanPath.split('/');
+  const rawId = rest.join('/');
+  if (!linktype || !rawId) return { kind: 'redirect-base' };
+  if (linktype !== 'id' && linktype !== 'profiles') {
+    return { kind: 'unknown', linktype, linkid: rawId };
+  }
+  let value;
+  try {
+    value = decodeURIComponent(rawId);
+  } catch {
+    value = rawId;
+  }
+  return { kind: linktype, value };
+}
+
 async function handleRequest(request, env) {
   const url = new URL(request.url);
   const { pathname, hostname } = url;
-  if (pathname === '/favicon.ico') {
-    return handleFavicon();
-  }
-  if (pathname === '/') {
+  const route = parseRoute(pathname);
+  if (route.kind === 'favicon') return handleFavicon();
+  if (route.kind === 'home') {
     return new Response(indexPage(hostname), {
       status: 200,
       headers: { 'Content-Type': 'text/html', 'Cache-Control': 'max-age=3600' }
     });
   }
-  const cleanPath = pathname.replace(/\/+$/, '');
-  let [, linktype, ...rest] = cleanPath.split('/');
-  let linkid = rest.join('/');
-  if (!linktype || !linkid) {
+  if (route.kind === 'redirect-base') {
     return Response.redirect(base, 301);
   }
+  if (route.kind === 'unknown') {
+    return new Response(
+      errorPage(hostname, 404, "Not Found", "Only /id/{vanity} and /profiles/{steamID} are supported."),
+      { status: 404, headers: { 'Content-Type': 'text/html' } }
+    );
+  }
   try {
-    linkid = decodeURIComponent(linkid);
-    if (linktype === 'id') {
-      linkid = await getId(linkid, env);
-      if (!linkid) {
-        return new Response(
-          errorPage(hostname, 404, "Profile Not Found", "We could not find a valid Steam ID for the provided URL."),
-          { status: 404, headers: { 'Content-Type': 'text/html' } }
-        );
-      }
-    }
-    if (linktype === 'profiles') {
-      linkid = convertToDota2Id(linkid);
-      if (!linkid) {
-        console.error(`Failed to convert Steam ID: ${rest.join('/')}`);
-      }
+    let linkid;
+    if (route.kind === 'id') {
+      const steamId64 = await getId(route.value, env);
+      linkid = steamId64 ? convertToDota2Id(steamId64) : null;
+    } else {
+      linkid = convertToDota2Id(route.value);
     }
     if (!linkid) {
       return new Response(
-        errorPage(hostname, 404, "Profile Not Found", "Invalid or unsupported Steam ID format."),
+        errorPage(hostname, 404, "Profile Not Found", "We could not resolve a valid Steam ID for the provided URL."),
         { status: 404, headers: { 'Content-Type': 'text/html' } }
       );
     }
@@ -386,8 +405,10 @@ function indexPage(hostname) {
 }
 
 function errorPage(hostname, statusCode, title, message) {
+  const retrySecondsMatch = message.match(/(\d+) seconds/);
+  const retrySeconds = retrySecondsMatch ? parseInt(retrySecondsMatch[1], 10) : 30;
   const autoRefresh = statusCode === 429
-    ? `<meta http-equiv="refresh" content="${Math.min(30, parseInt(message.match(/(\\d+) seconds/) || [0, 30])[1])};url=${new URL(hostname).origin + '/id/' + hostname.split('/').pop()}">`
+    ? `<meta http-equiv="refresh" content="${Math.min(30, retrySeconds)}">`
     : '';
   return `<!DOCTYPE html>
 <html>
@@ -432,9 +453,7 @@ function errorPage(hostname, statusCode, title, message) {
   </style>
   ${statusCode === 429 ? `<script>
     window.onload = function() {
-      const match = "${message}".match(/(\\d+) seconds/);
-      if (!match) return;
-      let seconds = parseInt(match[1]);
+      let seconds = ${retrySeconds};
       const countdownEl = document.getElementById('countdown');
       const refreshMsg = document.getElementById('auto-refresh');
       if (!countdownEl) return;
@@ -443,7 +462,7 @@ function errorPage(hostname, statusCode, title, message) {
         countdownEl.textContent = seconds;
         if (seconds <= 0) {
           clearInterval(timer);
-          refreshMsg.textContent = "Refreshing now...";
+          if (refreshMsg) refreshMsg.textContent = "Refreshing now...";
         }
       }, 1000);
     };
@@ -455,7 +474,7 @@ function errorPage(hostname, statusCode, title, message) {
   <div class="message">${message}</div>
   ${statusCode === 429 ? `
   <div class="retry-timer">
-    Retrying in <span id="countdown" class="countdown">${parseInt(message.match(/(\\d+) seconds/) || [0, 30])[1]}</span> seconds
+    Retrying in <span id="countdown" class="countdown">${retrySeconds}</span> seconds
   </div>
   <div id="auto-refresh" class="auto-refresh">Page will refresh automatically</div>
   ` : ''}
