@@ -32,14 +32,28 @@ https://www.dotabuff.com/players/{dotaID}
 - Clone the repository and navigate to the project folder.
 - Deploy the worker using Cloudflare’s dashboard or Wrangler CLI.
 
-### 2. Set Up API Key as a Secret
-- Go to Cloudflare Dashboard → Workers & Pages → Select Your Worker
-- Navigate to **Settings** → **Variables and Secrets**
-- Add a **Secret**:
-  - **Name:** `STEAM_API_KEY`
-  - **Value:** *Steam API Key*
+### 2. Set Up Secrets and Variables
+Go to Cloudflare Dashboard → Workers & Pages → Select Your Worker → **Settings** → **Variables and Secrets**.
 
-### 3. Bind Custom Domain (Optional)
+**Required:**
+- `STEAM_API_KEY` *(secret)* — your Steam Web API key from https://steamcommunity.com/dev/apikey
+
+**Optional:**
+- `STEAM_API_KEYS` *(secret)* — comma-separated list of additional Steam API keys for rotation under load. Whitespace around commas is trimmed automatically.
+
+### 3. KV Namespace Bindings (Optional)
+The worker uses two KV namespaces. Both are optional — the worker degrades gracefully if a binding is missing, but you lose caching / health tracking.
+
+Create namespaces in **Workers & Pages → KV**, then bind them to the worker under **Settings → Variables and Secrets → KV Namespace Bindings**:
+
+| Variable name      | Purpose                                                                 |
+|--------------------|-------------------------------------------------------------------------|
+| `STEAM_ID_CACHE`   | Caches resolved `vanity → steamID64` for 30 days.                       |
+| `API_KEY_STATUS`   | Marks invalid / rate-limited API keys so the next request skips them.   |
+
+> Note: a previous version of the worker used a `RATE_LIMITS` KV binding for in-worker rate limiting. That has been removed — KV is not suitable for atomic counters. If you need rate limiting, configure it via Cloudflare WAF Rate Limiting Rules or the native Workers Rate Limiting binding.
+
+### 4. Bind Custom Domain (Optional)
 To use a custom domain like `steamcommunitx.com`, configure Cloudflare DNS settings and map the domain to the worker.
 
 ## Code Breakdown
