@@ -6,6 +6,12 @@ routes = [
   { pattern = "steamcommunitx.com/*", zone_name = "steamcommunitx.com" }
 ]
 
+[vars]
+GA_ID = "G-5ZTR404EG7"
+# To enable Matomo, uncomment and set both:
+# MATOMO_URL = "//your-matomo-host/"
+# MATOMO_SITE_ID = "1"
+
 [[kv_namespaces]]
 binding = "STEAM_ID_CACHE"
 id = "3ddd6b06496d482a9cd55a9d6079e753"

@@ -219,8 +219,9 @@ async function handleRequest(request, env) {
   const { pathname, hostname } = url;
   const route = parseRoute(pathname);
   if (route.kind === 'favicon') return handleFavicon();
+  const analytics = analyticsSnippet(env);
   if (route.kind === 'home') {
-    return new Response(indexPage(hostname), {
+    return new Response(indexPage(hostname, analytics), {
       status: 200,
       headers: { 'Content-Type': 'text/html', 'Cache-Control': 'max-age=3600' }
     });
@@ -230,7 +231,7 @@ async function handleRequest(request, env) {
   }
   if (route.kind === 'unknown') {
     return new Response(
-      errorPage(hostname, 404, "Not Found", "Only /id/{vanity} and /profiles/{steamID} are supported."),
+      errorPage(hostname, 404, "Not Found", "Only /id/{vanity} and /profiles/{steamID} are supported.", analytics),
       { status: 404, headers: { 'Content-Type': 'text/html' } }
     );
   }
@@ -244,25 +245,25 @@ async function handleRequest(request, env) {
     }
     if (!linkid) {
       return new Response(
-        errorPage(hostname, 404, "Profile Not Found", "We could not resolve a valid Steam ID for the provided URL."),
+        errorPage(hostname, 404, "Profile Not Found", "We could not resolve a valid Steam ID for the provided URL.", analytics),
         { status: 404, headers: { 'Content-Type': 'text/html' } }
       );
     }
     const destinationURL = `${base}players/${linkid}`;
     return new Response(
-      redirectPage(destinationURL, hostname),
+      redirectPage(destinationURL, hostname, analytics),
       { status: 200, headers: { 'Content-Type': 'text/html', 'Cache-Control': 'max-age=300' } }
     );
   } catch (error) {
     console.error("Request handling error:", error);
     if (error.status === 429) {
       return new Response(
-        errorPage(hostname, 429, "Rate Limit Exceeded", `We're receiving too many requests. Please try again in ${error.retryAfter || 60} seconds.`),
+        errorPage(hostname, 429, "Rate Limit Exceeded", `We're receiving too many requests. Please try again in ${error.retryAfter || 60} seconds.`, analytics),
         { status: 429, headers: { 'Content-Type': 'text/html', 'Retry-After': String(error.retryAfter || 60) } }
       );
     }
     return new Response(
-      errorPage(hostname, error.status || 500, error.message || "Server Error", "Something went wrong processing your request. Please try again later."),
+      errorPage(hostname, error.status || 500, error.message || "Server Error", "Something went wrong processing your request. Please try again later.", analytics),
       { status: error.status || 500, headers: { 'Content-Type': 'text/html' } }
     );
   }
@@ -303,24 +304,54 @@ function getCommonStyles() {
   `;
 }
 
-function googleAnalyticsCode() {
-  return `<!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-5ZTR404EG7"></script>
+// Strict format guards so env values can't break out of JS string literals.
+const GA_ID_RE = /^[A-Za-z0-9_-]+$/;
+const MATOMO_URL_RE = /^(https?:)?\/\/[A-Za-z0-9.\-/]+\/$/;
+const MATOMO_SITE_ID_RE = /^\d+$/;
+
+export function analyticsSnippet(env) {
+  const parts = [];
+
+  if (env?.GA_ID && GA_ID_RE.test(env.GA_ID)) {
+    parts.push(`<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=${env.GA_ID}"></script>
 <script>
   window.dataLayer = window.dataLayer || [];
   function gtag(){dataLayer.push(arguments);}
   gtag('js', new Date());
-  gtag('config', 'G-5ZTR404EG7');
-</script>`;
+  gtag('config', '${env.GA_ID}');
+</script>`);
+  }
+
+  if (env?.MATOMO_URL && env?.MATOMO_SITE_ID
+      && MATOMO_URL_RE.test(env.MATOMO_URL)
+      && MATOMO_SITE_ID_RE.test(env.MATOMO_SITE_ID)) {
+    parts.push(`<!-- Matomo -->
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']);
+  _paq.push(['enableLinkTracking']);
+  (function() {
+    var u='${env.MATOMO_URL}';
+    _paq.push(['setTrackerUrl', u+'matomo.php']);
+    _paq.push(['setSiteId', '${env.MATOMO_SITE_ID}']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s);
+  })();
+</script>
+<!-- End Matomo Code -->`);
+  }
+
+  return parts.join('\n');
 }
 
-function indexPage(hostname) {
+function indexPage(hostname, analytics = '') {
   const host = hostname.split('/')[0];
   return `<!DOCTYPE html>
 <html>
 <head>
   <title>Steam to Dotabuff Redirector</title>
-  ${googleAnalyticsCode()}
+  ${analytics}
   <style>
     ${getCommonStyles()}
     /* Enhanced index page styling */
@@ -404,7 +435,7 @@ function indexPage(hostname) {
 </html>`;
 }
 
-function errorPage(hostname, statusCode, title, message) {
+function errorPage(hostname, statusCode, title, message, analytics = '') {
   const retrySecondsMatch = message.match(/(\d+) seconds/);
   const retrySeconds = retrySecondsMatch ? parseInt(retrySecondsMatch[1], 10) : 30;
   const autoRefresh = statusCode === 429
@@ -414,7 +445,7 @@ function errorPage(hostname, statusCode, title, message) {
 <html>
 <head>
   <title>${title} - Steam to Dotabuff</title>
-  ${googleAnalyticsCode()}
+  ${analytics}
   ${autoRefresh}
   <style>
     ${getCommonStyles()}
@@ -483,12 +514,12 @@ function errorPage(hostname, statusCode, title, message) {
 </html>`;
 }
 
-function redirectPage(destinationURL, hostname) {
+function redirectPage(destinationURL, hostname, analytics = '') {
   return `<!DOCTYPE html>
 <html>
 <head>
   <title>Redirecting to Dotabuff</title>
-  ${googleAnalyticsCode()}
+  ${analytics}
   <meta http-equiv="refresh" content="1;url=${destinationURL}">
   <style>
     body { 

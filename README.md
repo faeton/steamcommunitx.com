@@ -40,6 +40,10 @@ Go to Cloudflare Dashboard → Workers & Pages → Select Your Worker → **Sett
 
 **Optional:**
 - `STEAM_API_KEYS` *(secret)* — comma-separated list of additional Steam API keys for rotation under load. Whitespace around commas is trimmed automatically.
+- `GA_ID` *(var)* — Google Analytics 4 measurement ID (e.g. `G-XXXXXXX`). Injected into the `<head>` of every HTML page. Omit to disable GA.
+- `MATOMO_URL` and `MATOMO_SITE_ID` *(var)* — Matomo tracker base URL (must end with `/`, e.g. `//m.example.com/`) and numeric site ID. Both are required together; either alone is ignored. Omit to disable Matomo.
+
+Analytics values are validated against strict format guards before being inlined into HTML, so a malformed value is silently dropped rather than producing broken markup.
 
 ### 3. KV Namespace Bindings (Optional)
 The worker uses two KV namespaces. Both are optional — the worker degrades gracefully if a binding is missing, but you lose caching / health tracking.

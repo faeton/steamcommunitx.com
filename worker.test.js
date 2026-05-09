@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { convertToDota2Id, getConfiguredApiKeys, parseRoute } from './worker.js';
+import { convertToDota2Id, getConfiguredApiKeys, parseRoute, analyticsSnippet } from './worker.js';
 
 test('convertToDota2Id: SteamID64 → Dota account ID', () => {
   assert.equal(convertToDota2Id('76561197960287930'), '22202');
@@ -81,4 +81,45 @@ test('parseRoute: unknown linktype falls into unknown bucket', () => {
 
 test('parseRoute: malformed encoding falls back to raw value', () => {
   assert.deepEqual(parseRoute('/id/%E0%A4%A'), { kind: 'id', value: '%E0%A4%A' });
+});
+
+test('analyticsSnippet: empty when nothing configured', () => {
+  assert.equal(analyticsSnippet({}), '');
+  assert.equal(analyticsSnippet(undefined), '');
+});
+
+test('analyticsSnippet: GA only when GA_ID set', () => {
+  const out = analyticsSnippet({ GA_ID: 'G-ABC123' });
+  assert.match(out, /googletagmanager\.com\/gtag\/js\?id=G-ABC123/);
+  assert.match(out, /gtag\('config', 'G-ABC123'\)/);
+  assert.doesNotMatch(out, /matomo/i);
+});
+
+test('analyticsSnippet: Matomo only when both URL and SITE_ID set', () => {
+  const out = analyticsSnippet({ MATOMO_URL: '//m.example.com/', MATOMO_SITE_ID: '7' });
+  assert.match(out, /var u='\/\/m\.example\.com\/'/);
+  assert.match(out, /setSiteId', '7'/);
+  assert.doesNotMatch(out, /googletagmanager/);
+});
+
+test('analyticsSnippet: both providers concatenated', () => {
+  const out = analyticsSnippet({
+    GA_ID: 'G-ABC',
+    MATOMO_URL: '//m.example.com/',
+    MATOMO_SITE_ID: '1'
+  });
+  assert.match(out, /googletagmanager/);
+  assert.match(out, /matomo\.js/);
+});
+
+test('analyticsSnippet: rejects malformed values to prevent JS injection', () => {
+  assert.equal(analyticsSnippet({ GA_ID: "G-ABC');alert(1);//" }), '');
+  assert.equal(analyticsSnippet({ MATOMO_URL: "javascript:alert(1)//", MATOMO_SITE_ID: '1' }), '');
+  assert.equal(analyticsSnippet({ MATOMO_URL: '//m.example.com/', MATOMO_SITE_ID: '1; alert(1)' }), '');
+  assert.equal(analyticsSnippet({ MATOMO_URL: '//m.example.com', MATOMO_SITE_ID: '1' }), ''); // missing trailing /
+});
+
+test('analyticsSnippet: Matomo requires both URL and SITE_ID', () => {
+  assert.equal(analyticsSnippet({ MATOMO_URL: '//m.example.com/' }), '');
+  assert.equal(analyticsSnippet({ MATOMO_SITE_ID: '1' }), '');
 });
