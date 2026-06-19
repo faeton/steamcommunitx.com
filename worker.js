@@ -661,7 +661,7 @@ function redirectPage(destinationURL, hostname, analytics = '') {
     }
     .card {
       width: 100%;
-      max-width: 560px;
+      max-width: 600px;
       text-align: center;
     }
     .redirect-message { font-size: 1.4rem; font-weight: 600; margin: 0 0 6px; }
@@ -675,17 +675,19 @@ function redirectPage(destinationURL, hostname, analytics = '') {
     .ping-wrap { display: none; }
     html.show-ping .ping-wrap { display: block; }
     .ping-embed {
-      width: 100%;
-      height: 220px;
+      width: 600px;
+      max-width: 100%;
+      height: 300px;
       border: 1px solid var(--border);
       border-radius: 12px;
       background: var(--surface);
       display: block;
+      margin: 0 auto;
     }
     .bar {
       height: 4px;
       width: 100%;
-      max-width: 560px;
+      max-width: 600px;
       margin: 20px auto 0;
       background: var(--bg-2);
       border-radius: 999px;
