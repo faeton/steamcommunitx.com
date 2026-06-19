@@ -711,14 +711,23 @@ function redirectPage(destinationURL, hostname, analytics = '') {
       var BANNER_MS = ${PING_BANNER_DELAY_SECONDS * 1000};
       var QUICK_MS = ${QUICK_REDIRECT_SECONDS * 1000};
       function go() { window.location.replace(DEST); }
-      var last = 0;
-      try { last = parseInt(localStorage.getItem(KEY), 10) || 0; } catch (e) {}
-      if (Date.now() - last < WINDOW_MS) {
+      // Read/write both localStorage and a cookie — the Dota in-game (CEF)
+      // browser may have localStorage disabled but still keeps cookies.
+      function readShown() {
+        try { var v = parseInt(localStorage.getItem(KEY), 10); if (v) return v; } catch (e) {}
+        var m = document.cookie.match(/(?:^|;\\s*)unt1_ping_shown=(\\d+)/);
+        return m ? parseInt(m[1], 10) : 0;
+      }
+      function writeShown(t) {
+        try { localStorage.setItem(KEY, String(t)); } catch (e) {}
+        document.cookie = "unt1_ping_shown=" + t + ";path=/;max-age=" + (WINDOW_MS / 1000) + ";SameSite=Lax";
+      }
+      if (Date.now() - readShown() < WINDOW_MS) {
         // Banner already shown this hour — quick redirect, no iframe loaded.
         setTimeout(go, QUICK_MS);
         return;
       }
-      try { localStorage.setItem(KEY, String(Date.now())); } catch (e) {}
+      writeShown(Date.now());
       document.documentElement.className += " show-ping";
       document.addEventListener("DOMContentLoaded", function() {
         var f = document.getElementById("ping");
