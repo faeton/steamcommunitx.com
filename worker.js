@@ -619,7 +619,10 @@ function errorPage(hostname, statusCode, title, message, analytics = '') {
 }
 
 const PING_EMBED_URL = "https://ping.unt1.com/embed/dota";
-const REDIRECT_DELAY_SECONDS = 4;
+// Show the ping banner at most once per hour per visitor.
+const PING_BANNER_DELAY_SECONDS = 5;   // wait while the banner is shown
+const QUICK_REDIRECT_SECONDS = 1;      // wait when the banner is skipped
+const PING_WINDOW_MS = 60 * 60 * 1000; // once-per-hour window
 
 function redirectPage(destinationURL, hostname, analytics = '') {
   return `<!DOCTYPE html>
@@ -629,7 +632,7 @@ function redirectPage(destinationURL, hostname, analytics = '') {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Redirecting to Dotabuff</title>
   ${analytics}
-  <meta http-equiv="refresh" content="${REDIRECT_DELAY_SECONDS};url=${destinationURL}">
+  <meta http-equiv="refresh" content="${PING_BANNER_DELAY_SECONDS};url=${destinationURL}">
   <style>
     :root {
       --bg: #0f1620;
@@ -668,6 +671,9 @@ function redirectPage(destinationURL, hostname, analytics = '') {
       margin: 0 0 24px;
     }
     .sub strong { color: var(--accent); font-weight: 600; }
+    /* Banner is hidden until JS decides this visitor is due for it (once/hour). */
+    .ping-wrap { display: none; }
+    html.show-ping .ping-wrap { display: block; }
     .ping-embed {
       width: 100%;
       height: 220px;
@@ -690,7 +696,7 @@ function redirectPage(destinationURL, hostname, analytics = '') {
       height: 100%;
       width: 0;
       background: var(--accent);
-      animation: fill ${REDIRECT_DELAY_SECONDS}s linear forwards;
+      animation: fill ${PING_BANNER_DELAY_SECONDS}s linear forwards;
     }
     @keyframes fill { from { width: 0; } to { width: 100%; } }
     .manual-link { margin-top: 20px; font-size: 0.9rem; color: var(--muted); }
@@ -698,19 +704,38 @@ function redirectPage(destinationURL, hostname, analytics = '') {
     a:hover { text-decoration: underline; }
   </style>
   <script>
-    window.onload = function() {
-      setTimeout(function() {
-        window.location.href = "${destinationURL}";
-      }, ${REDIRECT_DELAY_SECONDS * 1000});
-    };
+    (function() {
+      var DEST = "${destinationURL}";
+      var KEY = "unt1_ping_shown_at";
+      var WINDOW_MS = ${PING_WINDOW_MS};
+      var BANNER_MS = ${PING_BANNER_DELAY_SECONDS * 1000};
+      var QUICK_MS = ${QUICK_REDIRECT_SECONDS * 1000};
+      function go() { window.location.replace(DEST); }
+      var last = 0;
+      try { last = parseInt(localStorage.getItem(KEY), 10) || 0; } catch (e) {}
+      if (Date.now() - last < WINDOW_MS) {
+        // Banner already shown this hour — quick redirect, no iframe loaded.
+        setTimeout(go, QUICK_MS);
+        return;
+      }
+      try { localStorage.setItem(KEY, String(Date.now())); } catch (e) {}
+      document.documentElement.className += " show-ping";
+      document.addEventListener("DOMContentLoaded", function() {
+        var f = document.getElementById("ping");
+        if (f) f.src = f.getAttribute("data-src");
+      });
+      setTimeout(go, BANNER_MS);
+    })();
   </script>
 </head>
 <body>
   <div class="card">
     <p class="redirect-message">Taking you to the Dotabuff profile…</p>
-    <p class="sub">While you wait, here's your live ping to the <strong>Dota 2</strong> servers.</p>
-    <iframe class="ping-embed" src="${PING_EMBED_URL}" title="Live Dota 2 server ping" loading="eager" referrerpolicy="no-referrer"></iframe>
-    <div class="bar"><span></span></div>
+    <div class="ping-wrap">
+      <p class="sub">While you wait, here's your live ping to the <strong>Dota 2</strong> servers.</p>
+      <iframe id="ping" class="ping-embed" data-src="${PING_EMBED_URL}" title="Live Dota 2 server ping" loading="eager" referrerpolicy="no-referrer"></iframe>
+      <div class="bar"><span></span></div>
+    </div>
     <div class="manual-link">Not redirected? <a href="${destinationURL}">Click here</a>.</div>
   </div>
 </body>
