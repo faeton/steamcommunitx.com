@@ -618,58 +618,101 @@ function errorPage(hostname, statusCode, title, message, analytics = '') {
 </html>`;
 }
 
+const PING_EMBED_URL = "https://ping.unt1.com/embed/dota";
+const REDIRECT_DELAY_SECONDS = 4;
+
 function redirectPage(destinationURL, hostname, analytics = '') {
   return `<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Redirecting to Dotabuff</title>
   ${analytics}
-  <meta http-equiv="refresh" content="1;url=${destinationURL}">
+  <meta http-equiv="refresh" content="${REDIRECT_DELAY_SECONDS};url=${destinationURL}">
   <style>
-    body { 
-      font-family: Arial, sans-serif;
-      margin: 40px auto;
-      max-width: 700px;
-      text-align: center;
+    :root {
+      --bg: #0f1620;
+      --bg-2: #182230;
+      --surface: #1c2530;
+      --border: #2a3848;
+      --text: #e6edf3;
+      --muted: #8b9bac;
+      --accent: #66c0f4;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background:
+        radial-gradient(ellipse at top, rgba(102,192,244,0.08), transparent 60%),
+        var(--bg);
+      color: var(--text);
       line-height: 1.6;
-      background-color: rgb(28,36,45); /* New RGB background */
-      color: #c6d4df;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
     }
-    .redirect-message { margin: 20px 0; font-size: 1.3em; }
-    .manual-link { margin-top: 15px; }
-    .manual-link a { color: #66c0f4; text-decoration: none; }
-    .manual-link a:hover { text-decoration: underline; }
-    .loader { 
-      border: 5px solid #f3f3f3;
-      border-top: 5px solid #3498db;
-      border-radius: 50%;
-      width: 40px;
-      height: 40px;
-      animation: spin 1s linear infinite;
-      margin: 20px auto;
+    .card {
+      width: 100%;
+      max-width: 560px;
+      text-align: center;
     }
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
+    .redirect-message { font-size: 1.4rem; font-weight: 600; margin: 0 0 6px; }
+    .sub {
+      color: var(--muted);
+      font-size: 0.95rem;
+      margin: 0 0 24px;
     }
-    a {
-      color: #66c0f4;
-      text-decoration: none;
+    .sub strong { color: var(--accent); font-weight: 600; }
+    .ping-embed {
+      width: 100%;
+      height: 220px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      display: block;
     }
+    .bar {
+      height: 4px;
+      width: 100%;
+      max-width: 560px;
+      margin: 20px auto 0;
+      background: var(--bg-2);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .bar > span {
+      display: block;
+      height: 100%;
+      width: 0;
+      background: var(--accent);
+      animation: fill ${REDIRECT_DELAY_SECONDS}s linear forwards;
+    }
+    @keyframes fill { from { width: 0; } to { width: 100%; } }
+    .manual-link { margin-top: 20px; font-size: 0.9rem; color: var(--muted); }
+    a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
   </style>
   <script>
     window.onload = function() {
       setTimeout(function() {
         window.location.href = "${destinationURL}";
-      }, 1000);
+      }, ${REDIRECT_DELAY_SECONDS * 1000});
     };
   </script>
 </head>
 <body>
-  <div class="redirect-message">Redirecting you to Dotabuff profile...</div>
-  <div class="loader"></div>
-  <div class="manual-link">If not redirected automatically, <a href="${destinationURL}">click here</a>.</div>
+  <div class="card">
+    <p class="redirect-message">Taking you to the Dotabuff profile…</p>
+    <p class="sub">While you wait, here's your live ping to the <strong>Dota 2</strong> servers.</p>
+    <iframe class="ping-embed" src="${PING_EMBED_URL}" title="Live Dota 2 server ping" loading="eager" referrerpolicy="no-referrer"></iframe>
+    <div class="bar"><span></span></div>
+    <div class="manual-link">Not redirected? <a href="${destinationURL}">Click here</a>.</div>
+  </div>
 </body>
 </html>`;
 }
