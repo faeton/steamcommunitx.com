@@ -618,13 +618,20 @@ function errorPage(hostname, statusCode, title, message, analytics = '') {
 </html>`;
 }
 
-const PING_EMBED_URL = "https://ping.unt1.com/embed/dota";
+// Banners rotated at random, one per redirect render. Heights vary by banner.
+const PING_BANNERS = [
+  { src: "https://ping.unt1.com/embed/dota", height: 300 },
+  { src: "https://ping.unt1.com/embed/dota-stress", height: 320 },
+  { src: "https://ping.unt1.com/embed/dota-stress-ru", height: 320 },
+  { src: "https://ping.unt1.com/embed/dota-ru", height: 300 },
+];
 // Show the ping banner at most once per hour per visitor.
 const PING_BANNER_DELAY_SECONDS = 5;   // wait while the banner is shown
 const QUICK_REDIRECT_SECONDS = 1;      // wait when the banner is skipped
 const PING_WINDOW_MS = 60 * 60 * 1000; // once-per-hour window
 
 function redirectPage(destinationURL, hostname, analytics = '') {
+  const banner = PING_BANNERS[Math.floor(Math.random() * PING_BANNERS.length)];
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -677,7 +684,7 @@ function redirectPage(destinationURL, hostname, analytics = '') {
     .ping-embed {
       width: 600px;
       max-width: 100%;
-      height: 300px;
+      height: ${banner.height}px;
       border: 1px solid var(--border);
       border-radius: 12px;
       background: var(--surface);
@@ -744,7 +751,7 @@ function redirectPage(destinationURL, hostname, analytics = '') {
     <p class="redirect-message">Taking you to the Dotabuff profile…</p>
     <div class="ping-wrap">
       <p class="sub">While you wait, here's your live ping to the <strong>Dota 2</strong> servers.</p>
-      <iframe id="ping" class="ping-embed" data-src="${PING_EMBED_URL}" title="Live Dota 2 server ping" loading="eager" referrerpolicy="no-referrer"></iframe>
+      <iframe id="ping" class="ping-embed" data-src="${banner.src}" title="Live Dota 2 server ping" loading="eager" referrerpolicy="no-referrer"></iframe>
       <div class="bar"><span></span></div>
     </div>
     <div class="manual-link">Not redirected? <a href="${destinationURL}">Click here</a>.</div>
