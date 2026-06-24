@@ -622,8 +622,6 @@ function errorPage(hostname, statusCode, title, message, analytics = '') {
 const PING_BANNERS = [
   { src: "https://ping.unt1.com/embed/dota", height: 300 },
   { src: "https://ping.unt1.com/embed/dota-stress", height: 320 },
-  { src: "https://ping.unt1.com/embed/dota-stress-ru", height: 320 },
-  { src: "https://ping.unt1.com/embed/dota-ru", height: 300 },
 ];
 // Show the ping banner at most once per hour per visitor.
 const PING_BANNER_DELAY_SECONDS = 5;   // wait while the banner is shown
