@@ -199,8 +199,10 @@ export function parseRoute(pathname) {
   if (pathname === '/favicon.ico') return { kind: 'favicon' };
   if (pathname === '/') return { kind: 'home' };
   const cleanPath = pathname.replace(/\/+$/, '');
-  const [, linktype, ...rest] = cleanPath.split('/');
-  const rawId = rest.join('/');
+  // Steam profile URLs often carry a subpath (/inventory, /games, /friends,
+  // /screenshots, ...). Only the first segment after the linktype is the
+  // vanity/ID — ignore anything after it so those URLs still resolve.
+  const [, linktype, rawId] = cleanPath.split('/');
   if (!linktype || !rawId) return { kind: 'redirect-base' };
   if (linktype !== 'id' && linktype !== 'profiles') {
     return { kind: 'unknown', linktype, linkid: rawId };

@@ -68,6 +68,13 @@ test('parseRoute: trailing slashes are normalized', () => {
   assert.deepEqual(parseRoute('/id/foo///'), { kind: 'id', value: 'foo' });
 });
 
+test('parseRoute: trailing subpath after the ID is ignored', () => {
+  assert.deepEqual(parseRoute('/profiles/76561198989843422/inventory/'), { kind: 'profiles', value: '76561198989843422' });
+  assert.deepEqual(parseRoute('/profiles/76561198123456789/games'), { kind: 'profiles', value: '76561198123456789' });
+  assert.deepEqual(parseRoute('/id/gabelogannewell/friends'), { kind: 'id', value: 'gabelogannewell' });
+  assert.deepEqual(parseRoute('/profiles/%5BU:1:22202%5D/screenshots'), { kind: 'profiles', value: '[U:1:22202]' });
+});
+
 test('parseRoute: empty linkid redirects to base', () => {
   assert.deepEqual(parseRoute('/id'), { kind: 'redirect-base' });
   assert.deepEqual(parseRoute('/id/'), { kind: 'redirect-base' });
