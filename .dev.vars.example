@@ -1,0 +1,12 @@
+# Copy to .dev.vars (gitignored) for local `wrangler dev`.
+# In production these are Wrangler secrets, not committed vars:
+#   wrangler secret put BANNERS
+#   wrangler secret put MATOMO_URL
+#   wrangler secret put MATOMO_SITE_ID
+
+# JSON array of { src, height, label? }. https URLs only. Omit the variable (or
+# set it to `[]`) and the redirect page renders no embed at all.
+BANNERS=[{"src":"https://example.com/embed/a","height":300},{"src":"https://example.com/embed/b","height":320,"label":"Optional caption"}]
+
+MATOMO_URL=//m.example.com/
+MATOMO_SITE_ID=1

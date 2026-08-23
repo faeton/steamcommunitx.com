@@ -6,10 +6,11 @@ routes = [
   { pattern = "steamcommunitx.com/*", zone_name = "steamcommunitx.com" }
 ]
 
+# BANNERS, MATOMO_URL and MATOMO_SITE_ID are supplied as secrets
+# (`wrangler secret put ...`) so a deployment keeps them out of this repo.
+# See .dev.vars.example for local development.
 [vars]
 GA_ID = "G-5ZTR404EG7"
-MATOMO_URL = "//m.unt1.com/"
-MATOMO_SITE_ID = "3"
 
 [[kv_namespaces]]
 binding = "STEAM_ID_CACHE"

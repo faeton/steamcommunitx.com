@@ -253,7 +253,7 @@ async function handleRequest(request, env) {
     }
     const destinationURL = `${base}players/${linkid}`;
     return new Response(
-      redirectPage(destinationURL, hostname, analytics),
+      redirectPage(destinationURL, hostname, analytics, resolveBanners(env)),
       { status: 200, headers: { 'Content-Type': 'text/html', 'Cache-Control': 'max-age=300' } }
     );
   } catch (error) {
@@ -620,18 +620,53 @@ function errorPage(hostname, statusCode, title, message, analytics = '') {
 </html>`;
 }
 
-// Banners rotated at random, one per redirect render. Heights vary by banner.
-const PING_BANNERS = [
-  { src: "https://ping.unt1.com/embed/dota", height: 300 },
-  { src: "https://ping.unt1.com/embed/dota-stress", height: 320 },
-];
-// Show the ping banner at most once per hour per visitor.
-const PING_BANNER_DELAY_SECONDS = 5;   // wait while the banner is shown
-const QUICK_REDIRECT_SECONDS = 1;      // wait when the banner is skipped
-const PING_WINDOW_MS = 60 * 60 * 1000; // once-per-hour window
+// The interstitial banner is configured entirely through the BANNERS secret: a
+// JSON array of { src, height, label? }, one entry picked at random per render.
+// Nothing is embedded when the secret is absent, so no deployment's embed URLs
+// live in this repo.
+// Strict format guards, as with the analytics vars: these values land inside an
+// HTML attribute and a JS string literal, so no quotes, backslashes or angle
+// brackets may get through.
+const BANNER_SRC_RE = /^https:\/\/[A-Za-z0-9.-]+(?::\d+)?\/[A-Za-z0-9._~\-/]*$/;
+const BANNER_LABEL_RE = /^[A-Za-z0-9 .,!?':()-]{1,120}$/;
 
-function redirectPage(destinationURL, hostname, analytics = '') {
-  const banner = PING_BANNERS[Math.floor(Math.random() * PING_BANNERS.length)];
+// Show the banner at most once per hour per visitor.
+const BANNER_DELAY_SECONDS = 5;      // wait while the banner is shown
+const QUICK_REDIRECT_SECONDS = 1;    // wait when the banner is skipped
+const BANNER_WINDOW_MS = 60 * 60 * 1000; // once-per-hour window
+
+export function resolveBanners(env) {
+  if (!env?.BANNERS) return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(env.BANNERS);
+  } catch (e) {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  // Entries failing the guards are dropped; an empty result means "no banner",
+  // and the redirect page renders without an embed.
+  return parsed.reduce((list, entry) => {
+    const height = Number(entry?.height);
+    if (!entry || typeof entry.src !== 'string' || !BANNER_SRC_RE.test(entry.src)
+        || !Number.isFinite(height) || height <= 1 || height > 1000) {
+      return list;
+    }
+    const banner = { src: entry.src, height: Math.round(height) };
+    if (typeof entry.label === 'string' && BANNER_LABEL_RE.test(entry.label)) {
+      banner.label = entry.label;
+    }
+    list.push(banner);
+    return list;
+  }, []);
+}
+
+function redirectPage(destinationURL, hostname, analytics = '', banners = []) {
+  const banner = banners.length ? banners[Math.floor(Math.random() * banners.length)] : null;
+  const delaySeconds = banner ? BANNER_DELAY_SECONDS : QUICK_REDIRECT_SECONDS;
+  const caption = banner && banner.label
+    ? banner.label
+    : "While you wait, here's your live ping to the <strong>Dota 2</strong> servers.";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -639,7 +674,7 @@ function redirectPage(destinationURL, hostname, analytics = '') {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Redirecting to Dotabuff</title>
   ${analytics}
-  <meta http-equiv="refresh" content="${PING_BANNER_DELAY_SECONDS};url=${destinationURL}">
+  <meta http-equiv="refresh" content="${delaySeconds};url=${destinationURL}">
   <style>
     :root {
       --bg: #0f1620;
@@ -678,10 +713,13 @@ function redirectPage(destinationURL, hostname, analytics = '') {
       margin: 0 0 24px;
     }
     .sub strong { color: var(--accent); font-weight: 600; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .manual-link { margin-top: 20px; font-size: 0.9rem; color: var(--muted); }${banner ? `
     /* Banner is hidden until JS decides this visitor is due for it (once/hour). */
-    .ping-wrap { display: none; }
-    html.show-ping .ping-wrap { display: block; }
-    .ping-embed {
+    .banner-wrap { display: none; }
+    html.show-banner .banner-wrap { display: block; }
+    .banner-embed {
       width: 600px;
       max-width: 100%;
       height: ${banner.height}px;
@@ -705,31 +743,28 @@ function redirectPage(destinationURL, hostname, analytics = '') {
       height: 100%;
       width: 0;
       background: var(--accent);
-      animation: fill ${PING_BANNER_DELAY_SECONDS}s linear forwards;
+      animation: fill ${BANNER_DELAY_SECONDS}s linear forwards;
     }
-    @keyframes fill { from { width: 0; } to { width: 100%; } }
-    .manual-link { margin-top: 20px; font-size: 0.9rem; color: var(--muted); }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
+    @keyframes fill { from { width: 0; } to { width: 100%; } }` : ''}
   </style>
   <script>
     (function() {
       var DEST = "${destinationURL}";
-      var KEY = "unt1_ping_shown_at";
-      var WINDOW_MS = ${PING_WINDOW_MS};
-      var BANNER_MS = ${PING_BANNER_DELAY_SECONDS * 1000};
       var QUICK_MS = ${QUICK_REDIRECT_SECONDS * 1000};
       function go() { window.location.replace(DEST); }
+${banner ? `      var KEY = "ping_shown_at";
+      var WINDOW_MS = ${BANNER_WINDOW_MS};
+      var BANNER_MS = ${BANNER_DELAY_SECONDS * 1000};
       // Read/write both localStorage and a cookie — the Dota in-game (CEF)
       // browser may have localStorage disabled but still keeps cookies.
       function readShown() {
         try { var v = parseInt(localStorage.getItem(KEY), 10); if (v) return v; } catch (e) {}
-        var m = document.cookie.match(/(?:^|;\\s*)unt1_ping_shown=(\\d+)/);
+        var m = document.cookie.match(/(?:^|;\\s*)ping_shown=(\\d+)/);
         return m ? parseInt(m[1], 10) : 0;
       }
       function writeShown(t) {
         try { localStorage.setItem(KEY, String(t)); } catch (e) {}
-        document.cookie = "unt1_ping_shown=" + t + ";path=/;max-age=" + (WINDOW_MS / 1000) + ";SameSite=Lax";
+        document.cookie = "ping_shown=" + t + ";path=/;max-age=" + (WINDOW_MS / 1000) + ";SameSite=Lax";
       }
       if (Date.now() - readShown() < WINDOW_MS) {
         // Banner already shown this hour — quick redirect, no iframe loaded.
@@ -737,23 +772,23 @@ function redirectPage(destinationURL, hostname, analytics = '') {
         return;
       }
       writeShown(Date.now());
-      document.documentElement.className += " show-ping";
+      document.documentElement.className += " show-banner";
       document.addEventListener("DOMContentLoaded", function() {
-        var f = document.getElementById("ping");
+        var f = document.getElementById("banner");
         if (f) f.src = f.getAttribute("data-src");
       });
-      setTimeout(go, BANNER_MS);
+      setTimeout(go, BANNER_MS);` : `      setTimeout(go, QUICK_MS);`}
     })();
   </script>
 </head>
 <body>
   <div class="card">
-    <p class="redirect-message">Taking you to the Dotabuff profile…</p>
-    <div class="ping-wrap">
-      <p class="sub">While you wait, here's your live ping to the <strong>Dota 2</strong> servers.</p>
-      <iframe id="ping" class="ping-embed" data-src="${banner.src}" title="Live Dota 2 server ping" loading="eager" referrerpolicy="no-referrer"></iframe>
+    <p class="redirect-message">Taking you to the Dotabuff profile…</p>${banner ? `
+    <div class="banner-wrap">
+      <p class="sub">${caption}</p>
+      <iframe id="banner" class="banner-embed" data-src="${banner.src}" title="Live Dota 2 server ping" loading="eager" referrerpolicy="no-referrer"></iframe>
       <div class="bar"><span></span></div>
-    </div>
+    </div>` : ''}
     <div class="manual-link">Not redirected? <a href="${destinationURL}">Click here</a>.</div>
   </div>
 </body>

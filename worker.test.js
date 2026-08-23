@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { convertToDota2Id, getConfiguredApiKeys, parseRoute, analyticsSnippet } from './worker.js';
+import { convertToDota2Id, getConfiguredApiKeys, parseRoute, analyticsSnippet, resolveBanners } from './worker.js';
 
 test('convertToDota2Id: SteamID64 → Dota account ID', () => {
   assert.equal(convertToDota2Id('76561197960287930'), '22202');
@@ -129,4 +129,64 @@ test('analyticsSnippet: rejects malformed values to prevent JS injection', () =>
 test('analyticsSnippet: Matomo requires both URL and SITE_ID', () => {
   assert.equal(analyticsSnippet({ MATOMO_URL: '//m.example.com/' }), '');
   assert.equal(analyticsSnippet({ MATOMO_SITE_ID: '1' }), '');
+});
+
+test('resolveBanners: no banner when unset', () => {
+  assert.deepEqual(resolveBanners({}), []);
+  assert.deepEqual(resolveBanners(undefined), []);
+  assert.deepEqual(resolveBanners({ BANNERS: '' }), []);
+  assert.deepEqual(resolveBanners({ BANNERS: '[]' }), []);
+});
+
+test('resolveBanners: parses a configured list', () => {
+  const out = resolveBanners({
+    BANNERS: '[{"src":"https://example.com/embed/a","height":300},' +
+             '{"src":"https://example.com/embed/b","height":"320","label":"Custom caption"}]'
+  });
+  assert.deepEqual(out, [
+    { src: 'https://example.com/embed/a', height: 300 },
+    { src: 'https://example.com/embed/b', height: 320, label: 'Custom caption' }
+  ]);
+});
+
+test('resolveBanners: malformed JSON or non-array yields no banner', () => {
+  assert.deepEqual(resolveBanners({ BANNERS: 'not json' }), []);
+  assert.deepEqual(resolveBanners({ BANNERS: '{"src":"https://example.com/a"}' }), []);
+  assert.deepEqual(resolveBanners({ BANNERS: '"https://example.com/a"' }), []);
+});
+
+test('resolveBanners: drops entries that fail the format guards', () => {
+  const out = resolveBanners({
+    BANNERS: JSON.stringify([
+      { src: 'javascript:alert(1)//', height: 300 },
+      { src: 'http://example.com/embed/a', height: 300 },
+      { src: 'https://example.com/a";alert(1)//', height: 300 },
+      { src: 'https://example.com/a<script>', height: 300 },
+      { src: 'https://example.com/a', height: 5000 },
+      { src: 'https://example.com/a', height: 'tall' },
+      { src: 'https://example.com/a' },
+      { height: 300 },
+      null
+    ])
+  });
+  assert.deepEqual(out, []);
+});
+
+test('resolveBanners: keeps valid entries alongside rejected ones', () => {
+  const out = resolveBanners({
+    BANNERS: JSON.stringify([
+      { src: 'javascript:alert(1)//', height: 300 },
+      { src: 'https://example.com/embed/ok', height: 300 }
+    ])
+  });
+  assert.deepEqual(out, [{ src: 'https://example.com/embed/ok', height: 300 }]);
+});
+
+test('resolveBanners: drops a label containing markup but keeps the banner', () => {
+  const out = resolveBanners({
+    BANNERS: JSON.stringify([
+      { src: 'https://example.com/embed/a', height: 300, label: '<img src=x onerror=alert(1)>' }
+    ])
+  });
+  assert.deepEqual(out, [{ src: 'https://example.com/embed/a', height: 300 }]);
 });

@@ -41,9 +41,20 @@ Go to Cloudflare Dashboard → Workers & Pages → Select Your Worker → **Sett
 **Optional:**
 - `STEAM_API_KEYS` *(secret)* — comma-separated list of additional Steam API keys for rotation under load. Whitespace around commas is trimmed automatically.
 - `GA_ID` *(var)* — Google Analytics 4 measurement ID (e.g. `G-XXXXXXX`). Injected into the `<head>` of every HTML page. Omit to disable GA.
-- `MATOMO_URL` and `MATOMO_SITE_ID` *(var)* — Matomo tracker base URL (must end with `/`, e.g. `//m.example.com/`) and numeric site ID. Both are required together; either alone is ignored. Omit to disable Matomo.
+- `MATOMO_URL` and `MATOMO_SITE_ID` *(secret)* — Matomo tracker base URL (must end with `/`, e.g. `//m.example.com/`) and numeric site ID. Both are required together; either alone is ignored. Omit to disable Matomo.
+- `BANNERS` *(secret)* — JSON array of `{ "src", "height", "label" }` entries for the iframe shown on the redirect interstitial (one is picked at random per render, at most once per hour per visitor). `src` must be an `https` URL, `height` is in pixels, and `label` is an optional plain-text caption. Omit the secret and the interstitial renders no embed at all — it just shows the redirect message for a second. No embed URLs are baked into the source.
 
-Analytics values are validated against strict format guards before being inlined into HTML, so a malformed value is silently dropped rather than producing broken markup.
+Analytics and banner values are validated against strict format guards before being inlined into HTML, so a malformed value is silently dropped rather than producing broken markup.
+
+Set the secrets with Wrangler instead of the dashboard if you prefer:
+
+```bash
+wrangler secret put BANNERS
+wrangler secret put MATOMO_URL
+wrangler secret put MATOMO_SITE_ID
+```
+
+For local `wrangler dev`, copy `.dev.vars.example` to `.dev.vars` (gitignored) and fill in your own values.
 
 ### 3. KV Namespace Bindings (Optional)
 The worker uses two KV namespaces. Both are optional — the worker degrades gracefully if a binding is missing, but you lose caching / health tracking.
