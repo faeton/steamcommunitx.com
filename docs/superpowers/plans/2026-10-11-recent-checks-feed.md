@@ -2381,7 +2381,9 @@ blocked-words and hidden-ids lists."
 ```js
 // Home page "Recently checked" feed: SSE (polling fallback), drip-in with a
 // split-flap animation, catch/release scrolling, and a nickname filter.
-// All nickname text goes through DOM text nodes, never innerHTML.
+// All nickname text goes through DOM text nodes, never innerHTML. Optional
+// browser APIs (Element.animate, getAnimations) are feature-checked because
+// the Dota in-game browser runs an older Chromium.
 import {
   t, ago, pickLang, avatarUrl, splitTerms, matchesTerms, highlightRanges,
   timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, HOUR_MS
@@ -2391,14 +2393,17 @@ const ROW = 56;
 const IDLE_MS = 8000;
 const LEAVE_MS = 1500;
 const HOVER_MAX_MS = 30000; // a cursor parked on the list does not freeze it forever
+const RELEASE_SCROLL_MS = 350;
 const BURST = 3;
 const MAX_DRIP = 60;
 const MAX_ROWS = 200;
 const POLL_MS = 30000;
+const FLAP_TICK_MS = 45;
 const GLYPHS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZАБВГДЕЖЗИКЛМНОПРСТУ0123456789#@*';
 
 const lang = pickLang(navigator.language);
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const canHover = matchMedia('(hover: hover)').matches;
 const $ = id => document.getElementById(id);
 const section = $('feed-section');
 const box = $('feed');
@@ -2421,21 +2426,29 @@ let loaded = false;
 let hourCount = 0;
 let paused = false;
 let hover = false;
-let releaseTimer = null;
+let releaseTimer = null;  // idle countdown until auto-release
+let flushTimer = null;    // release in progress (scrolling back to top)
 let lastIntent = 0;
 let ignoreScrollUntil = 0;
 let dripTimer = null;
+let layoutKey = '';
 let es = null;
+let streamUp = false;
 let pollTimer = null;
 
 section.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(lang, el.dataset.i18n); });
 qInput.placeholder = t(lang, 'searchPlaceholder');
 
+function animate(el, keyframes, options) {
+  try { return el.animate ? el.animate(keyframes, options) : null; } catch { return null; }
+}
+
 // ---- rows ----
 
 function paint(r) {
   const e = r._e;
-  const nick = r.querySelector('.fd-nick');
+  const nick = r._nick;
+  nick.removeAttribute('aria-label');
   nick.textContent = '';
   let pos = 0;
   for (const [a, b] of highlightRanges(e.name, terms)) {
@@ -2452,7 +2465,7 @@ function paint(r) {
     x.textContent = '×' + e.count;
     nick.append(x);
   }
-  r.querySelector('.fd-meta').textContent = ago(lang, e.lastTs, Date.now());
+  r._meta.textContent = ago(lang, e.lastTs, Date.now());
   r.hidden = !matchesTerms(e.name, terms);
 }
 
@@ -2470,11 +2483,11 @@ function makeRow(e) {
   if (src) img.src = src;
   const who = document.createElement('div');
   who.className = 'fd-who';
-  const nick = document.createElement('div');
-  nick.className = 'fd-nick';
-  const meta = document.createElement('div');
-  meta.className = 'fd-meta';
-  who.append(nick, meta);
+  r._nick = document.createElement('div');
+  r._nick.className = 'fd-nick';
+  r._meta = document.createElement('div');
+  r._meta.className = 'fd-meta';
+  who.append(r._nick, r._meta);
   const go = document.createElement('a');
   go.className = 'fd-go';
   go.href = 'https://www.dotabuff.com/players/' + encodeURIComponent(e.dotaId);
@@ -2484,107 +2497,120 @@ function makeRow(e) {
   return r;
 }
 
+function dropRow(r) {
+  if (r._flap) clearInterval(r._flap);
+  r._flap = null;
+  rows.delete(r._e.steamId64);
+  r.remove();
+}
+
+// One interval per row drives every glyph; it stops when done or when the
+// row is dropped. Screen readers get the real name via aria-label.
 function flap(r) {
-  const nick = r.querySelector('.fd-nick');
-  const chars = Array.from(r._e.name);
+  const name = r._e.name;
+  const chars = Array.from(name);
+  const nick = r._nick;
+  nick.setAttribute('aria-label', name);
   nick.textContent = '';
   const spans = chars.map(c => {
     const s = document.createElement('span');
     s.className = 'fd-flap spin';
+    s.setAttribute('aria-hidden', 'true');
     s.textContent = c === ' ' ? ' ' : GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
     nick.append(s);
     return s;
   });
-  let done = 0;
-  const finish = () => { if (++done >= spans.length) setTimeout(() => paint(r), 450); };
-  spans.forEach((s, i) => {
-    if (chars[i] === ' ') { finish(); return; }
-    const ticks = 4 + i * 2;
-    let k = 0;
-    const iv = setInterval(() => {
-      if (++k >= ticks) {
-        clearInterval(iv);
+  const lastTick = 4 + (chars.length - 1) * 2;
+  let tick = 0;
+  r._flap = setInterval(() => {
+    tick++;
+    spans.forEach((s, i) => {
+      if (s._done) return;
+      if (chars[i] === ' ' || tick >= 4 + i * 2) {
+        s._done = true;
         s.textContent = chars[i];
         s.classList.remove('spin');
         s.classList.add('fd-flip');
-        finish();
-        return;
+      } else {
+        s.textContent = GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
       }
-      s.textContent = GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
-    }, 45);
-  });
-  r.querySelector('.fd-av').classList.add('fd-flip');
-  r.animate([{ height: '0px' }, { height: ROW + 'px' }], { duration: 260, easing: 'ease-out' });
+    });
+    if (tick >= lastTick) {
+      clearInterval(r._flap);
+      r._flap = null;
+      setTimeout(() => { if (r.isConnected) paint(r); }, 450);
+    }
+  }, FLAP_TICK_MS);
+  r.firstChild.classList.add('fd-flip');
+  animate(r, [{ height: '0px' }, { height: ROW + 'px' }], { duration: 260, easing: 'ease-out' });
 }
 
 function notifyPinned(r) {
-  r.classList.remove('fd-pinned');
-  void r.offsetWidth;
   r.classList.add('fd-pinned');
   if (document.hidden || !document.hasFocus()) document.title = '★ ' + baseTitle;
 }
 
-function insert(e, animate) {
+function insert(e, animated) {
   const old = rows.get(e.steamId64);
   if (old && !isNewer(e, old._e)) return; // a stale queued copy must not overwrite newer data
-  if (old) old.remove();
+  if (old) dropRow(old);
   const r = makeRow(e);
   rows.set(e.steamId64, r);
   list.insertBefore(r, list.querySelector('.fd-row'));
-  if (animate && !r.hidden && !reduce) flap(r);
+  if (animated && !r.hidden && !reduce) flap(r);
   if (loaded && terms.length && !r.hidden) notifyPinned(r);
 }
 
+// Rows past the hour are forgotten entirely; rows past the display cap only
+// lose their DOM node, so the next snapshot does not resurrect them as new.
 function trim() {
   const cutoff = Date.now() - HOUR_MS;
-  const all = [...list.querySelectorAll('.fd-row')];
-  all.forEach((r, i) => {
-    if (i >= MAX_ROWS || r._e.lastTs < cutoff) {
-      rows.delete(r._e.steamId64);
-      latest.delete(r._e.steamId64);
-      r.remove();
-    }
+  [...list.querySelectorAll('.fd-row')].forEach((r, i) => {
+    if (r._e.lastTs < cutoff || i >= MAX_ROWS) dropRow(r);
   });
+  for (const [id, e] of latest) if (e.lastTs < cutoff) latest.delete(id);
 }
 
+// Rebuild time-block headers only when the grouping changed, and keep the
+// scroll position so a paused reader is not moved.
 function layout() {
-  list.querySelectorAll('.fd-blk, .fd-empty').forEach(el => el.remove());
   const now = Date.now();
+  const visible = [...list.querySelectorAll('.fd-row')].filter(r => !r.hidden);
+  const blocks = visible.map(r => timeBlock(r._e.lastTs, now));
+  const key = visible.map((r, i) => r._e.steamId64 + ':' + blocks[i]).join('|');
+  hitsEl.textContent = terms.length ? t(lang, 'hits', { n: visible.length }) : '';
+  if (key === layoutKey) return;
+  layoutKey = key;
+  const top = list.scrollTop;
+  list.querySelectorAll('.fd-blk, .fd-empty').forEach(el => el.remove());
   let current = null;
-  let visible = 0;
-  for (const r of list.querySelectorAll('.fd-row')) {
-    if (r.hidden) continue;
-    visible++;
-    const b = timeBlock(r._e.lastTs, now);
-    if (b !== current) {
-      current = b;
-      const h = document.createElement('div');
-      h.className = 'fd-blk';
-      h.textContent = t(lang, b);
-      list.insertBefore(h, r);
-    }
-  }
-  if (!visible) {
+  visible.forEach((r, i) => {
+    if (blocks[i] === current) return;
+    current = blocks[i];
+    const h = document.createElement('div');
+    h.className = 'fd-blk';
+    h.textContent = t(lang, current);
+    list.insertBefore(h, r);
+  });
+  if (!visible.length) {
     const empty = document.createElement('div');
     empty.className = 'fd-empty';
     empty.textContent = t(lang, 'empty');
     list.append(empty);
   }
-  hitsEl.textContent = terms.length ? t(lang, 'hits', { n: visible }) : '';
+  if (paused) list.scrollTop = top;
 }
 
 function renderCount() {
   countEl.textContent = t(lang, 'hourCount', { n: hourCount });
 }
 
-// ---- drip ----
-
 function removeIds(ids) {
   if (!ids.length) return;
   const gone = new Set(ids);
   for (const id of gone) {
-    rows.get(id)?.remove();
-    rows.delete(id);
+    const r = rows.get(id);
+    if (r) dropRow(r);
     latest.delete(id);
   }
   for (const q of [held, incoming]) {
@@ -2594,6 +2620,8 @@ function removeIds(ids) {
   if (paused) renderPill();
 }
 
+// ---- drip ----
+
 function enqueue(entries) {
   for (const e of entries) (paused ? held : incoming).push(e);
   if (paused) renderPill();
@@ -2602,14 +2630,21 @@ function enqueue(entries) {
 
 function pump() {
   if (dripTimer || paused || !incoming.length) return;
-  if (incoming.length > MAX_DRIP) incoming.splice(0, incoming.length - MAX_DRIP).forEach(e => insert(e, false));
-  insert(incoming.shift(), true);
-  trim();
-  layout();
+  try {
+    if (incoming.length > MAX_DRIP) incoming.splice(0, incoming.length - MAX_DRIP).forEach(e => insert(e, false));
+    insert(incoming.shift(), true);
+    trim();
+    layout();
+  } catch (err) {
+    console.error('feed: insert failed', err);
+  }
   dripTimer = setTimeout(() => { dripTimer = null; pump(); }, dripDelay(incoming.length + 1));
 }
 
 // ---- catch / release ----
+// States: live (paused = false) → paused (held collects arrivals, optional
+// releaseTimer) → releasing (still paused, flushTimer pending while we scroll
+// to the top) → live. Any user intent during releasing cancels it.
 
 function atTop() { return list.scrollTop <= 2; }
 
@@ -2618,37 +2653,44 @@ function pause(ms) {
   box.classList.add('paused');
   liveEl.textContent = t(lang, 'paused');
   clearTimeout(releaseTimer);
+  clearTimeout(flushTimer);
   releaseTimer = null;
-  bar.getAnimations().forEach(a => a.cancel());
+  flushTimer = null;
+  ignoreScrollUntil = 0;
+  try { (bar.getAnimations ? bar.getAnimations() : []).forEach(a => a.cancel()); } catch { /* old browser */ }
   if (ms) {
-    releaseTimer = setTimeout(resume, ms);
-    if (!reduce) bar.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: ms, easing: 'linear', fill: 'forwards' });
+    releaseTimer = setTimeout(release, ms);
+    if (!reduce) animate(bar, [{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: ms, easing: 'linear', fill: 'forwards' });
   }
   renderPill();
 }
 
-function resume() {
+function release() {
   clearTimeout(releaseTimer);
   releaseTimer = null;
+  if (flushTimer) return;
+  if (list.scrollTop > 0 && !reduce) {
+    ignoreScrollUntil = Date.now() + 800; // our own smooth scroll is not user intent
+    try { list.scrollTo({ top: 0, behavior: 'smooth' }); } catch { list.scrollTop = 0; }
+    flushTimer = setTimeout(goLive, RELEASE_SCROLL_MS);
+  } else {
+    list.scrollTop = 0;
+    goLive();
+  }
+}
+
+function goLive() {
+  flushTimer = null;
   paused = false;
   box.classList.remove('paused');
   liveEl.textContent = t(lang, 'live');
   const backlog = held.splice(0);
-  const flush = () => {
-    backlog.slice(0, Math.max(0, backlog.length - BURST)).forEach(e => insert(e, false));
-    incoming.push(...backlog.slice(Math.max(0, backlog.length - BURST)));
-    trim();
-    layout();
-    pump();
-  };
-  if (list.scrollTop > 0 && !reduce) {
-    ignoreScrollUntil = Date.now() + 800; // our own smooth scroll is not user intent
-    list.scrollTo({ top: 0, behavior: 'smooth' });
-    setTimeout(flush, 350);
-  } else {
-    list.scrollTop = 0;
-    flush();
-  }
+  const loud = Math.max(0, backlog.length - BURST);
+  backlog.slice(0, loud).forEach(e => insert(e, false));
+  incoming.push(...backlog.slice(loud));
+  trim();
+  layout();
+  pump();
 }
 
 function renderPill() {
@@ -2657,28 +2699,41 @@ function renderPill() {
     : t(lang, hover ? 'pillHover' : 'pill');
 }
 
-['wheel', 'touchstart', 'touchmove', 'pointerdown', 'keydown'].forEach(ev => {
-  list.addEventListener(ev, () => { lastIntent = Date.now(); }, { passive: true });
+function onIntent() {
+  lastIntent = Date.now();
+  if (flushTimer) pause(hover ? HOVER_MAX_MS : IDLE_MS); // the reader grabbed it mid-release
+}
+
+['wheel', 'touchstart', 'pointerdown', 'keydown'].forEach(ev => {
+  list.addEventListener(ev, onIntent, { passive: true });
 });
 list.addEventListener('scroll', () => {
   const now = Date.now();
   if (now < ignoreScrollUntil || now - lastIntent > 900) return; // not the user
-  if (atTop() && !hover) resume();
+  if (atTop() && !hover) release();
   else pause(hover ? HOVER_MAX_MS : IDLE_MS);
 }, { passive: true });
-list.addEventListener('mouseenter', () => { hover = true; pause(HOVER_MAX_MS); });
-list.addEventListener('mouseleave', () => {
-  hover = false;
-  if (paused) pause(atTop() ? LEAVE_MS : IDLE_MS);
-});
-list.addEventListener('touchend', () => pause(atTop() ? LEAVE_MS : IDLE_MS), { passive: true });
-pill.addEventListener('click', () => { hover = false; resume(); });
+list.addEventListener('touchend', () => {
+  if (paused && atTop()) pause(LEAVE_MS);
+  else if (!atTop()) pause(IDLE_MS);
+}, { passive: true });
+// Touch devices synthesise mouseenter without a reliable mouseleave, so hover
+// pausing is only wired up where a real pointer can hover.
+if (canHover) {
+  list.addEventListener('mouseenter', () => { hover = true; pause(HOVER_MAX_MS); });
+  list.addEventListener('mouseleave', () => {
+    hover = false;
+    if (paused && !flushTimer) pause(atTop() ? LEAVE_MS : IDLE_MS);
+  });
+}
+pill.addEventListener('click', () => { hover = false; release(); });
 
 // ---- search ----
 
 function setQuery(q) {
   terms = splitTerms(q);
-  rows.forEach(paint);
+  rows.forEach(r => { if (!r._flap) paint(r); });
+  layoutKey = '';
   layout();
 }
 
@@ -2719,9 +2774,12 @@ function onData(data, isSnapshot) {
 }
 
 async function poll() {
+  if (streamUp) return;
   try {
     const res = await fetch('/api/recent.json');
-    if (res.ok) onData(await res.json(), true);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!streamUp) onData(data, true); // the stream came back meanwhile: its data wins
   } catch { /* offline; try again next interval */ }
 }
 
@@ -2743,8 +2801,9 @@ function connect() {
   es.addEventListener('entries', ev => onData(JSON.parse(ev.data), false));
   // While the stream is down (reconnecting or refused) keep the list fresh by
   // polling; the next successful open stops it.
-  es.onopen = () => stopPolling();
+  es.onopen = () => { streamUp = true; stopPolling(); };
   es.onerror = () => {
+    streamUp = false;
     if (!pollTimer) startPolling();
     if (es && es.readyState === EventSource.CLOSED) es = null;
   };
@@ -2752,6 +2811,7 @@ function connect() {
 
 function disconnect() {
   if (es) { es.close(); es = null; }
+  streamUp = false;
   stopPolling();
 }
 
@@ -2761,11 +2821,15 @@ document.addEventListener('visibilitychange', () => {
 });
 
 setInterval(() => {
-  if (!loaded) return;
+  if (!loaded || document.hidden) return;
   const now = Date.now();
-  rows.forEach(r => { if (!r.hidden) r.querySelector('.fd-meta').textContent = ago(lang, r._e.lastTs, now); });
+  rows.forEach(r => {
+    if (r.hidden) return;
+    const text = ago(lang, r._e.lastTs, now);
+    if (r._meta.textContent !== text) r._meta.textContent = text;
+  });
 }, 1000);
-setInterval(() => { if (loaded && !paused) { trim(); layout(); } }, 15000);
+setInterval(() => { if (loaded && !paused && !document.hidden) { trim(); layout(); } }, 15000);
 
 connect();
 ```
@@ -2798,10 +2862,10 @@ node --disable-warning=ExperimentalWarning "$TMPDIR/sc-dev/dev-feed.mjs"
 (Replace `/ABSOLUTE/PATH/TO/REPO` with the repo path.) Open `http://127.0.0.1:8787/` and verify:
 1. The feed section appears after the first snapshot; rows show avatar, nickname, `×N`, relative time, "Dotabuff →" pointing at `https://www.dotabuff.com/players/<id>`.
 2. New rows flap in one at a time; `<b>not bold</b>` renders as literal text.
-3. Hover pauses (gold dot, pill "Paused while hovering", released after 30 s even if the cursor stays); scrolling down pauses with a countdown bar; after 8 s idle it scrolls to the top and drips held rows; scrolling back to the top resumes immediately; clicking the pill resumes.
+3. Hover pauses on pointer devices only (gold dot, pill "Paused while hovering", released after 30 s even if the cursor stays); on a phone a tap at the top does not stick a pause; scrolling down pauses with a countdown bar; after 8 s idle it scrolls to the top and drips held rows; scrolling back to the top resumes immediately; clicking the pill resumes.
 4. Typing `akamai kvyze` filters and highlights; `?q=` updates; reload keeps the query; with the tab in the background a matching new row adds "★" to the title, cleared on focus.
 5. Headers "Just now / Last 5 min / Last hour" stay sticky while scrolling.
-6. DevTools → Rendering → emulate `prefers-reduced-motion: reduce`: rows appear without flapping.
+6. DevTools → Rendering → emulate `prefers-reduced-motion: reduce`: rows appear without flapping. Scroll down while paused and wait for a 15 s refresh: the view must not jump. Grab the list with the wheel during the auto-release scroll: it must stay paused with the pill count intact.
 7. DevTools → Network: switching to another tab closes the EventSource; returning reconnects.
 8. `curl -s 'http://127.0.0.1:8787/profiles/76561197960300001' -H 'User-Agent: Mozilla/5.0' -H 'Accept: text/html' | grep teaser` shows the teaser link; in a browser, clicking the teaser on the redirect page lands on `/` and does **not** continue to Dotabuff.
 
