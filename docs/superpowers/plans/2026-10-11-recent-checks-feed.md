@@ -1017,7 +1017,7 @@ the optional blocked-words and hidden-ids files."
 - Create: `src/feed/store.js`, `src/feed/ratelimit.js`, `test/store.test.js`
 
 **Interfaces:**
-- Produces: `openDb(path) → DatabaseSync`; `new SqliteKV(db, namespace, clock?)` with async `get(key) → string|null`, `put(key, value, { expirationTtl? })`, `delete(key)`; `new FeedStore(db, clock?)` with `addCheck(steamId64, ts?)`, `takePending(limit) → string[]`, `pendingCount() → number`, `getPlayer(id) → {steamid,name,avatarHash,visible,fetchedAt}|null`, `freshPlayerIds(ids, maxAgeMs) → Set`, `completePending(ids, players[{steamid,name,avatarHash,visible,fetchedAt}])`, `recent(sinceTs, limit) → [{steamId64,name,avatarHash,lastTs,count}]`, `hourCount(sinceTs) → number`, `seen(steamId64, sinceTs) → {lastTs,count}|null`, `purge(now?)`; `new RateLimiter(limit, windowMs, clock?)` with `allow(key) → boolean`.
+- Produces: `openDb(path) → DatabaseSync`; `new SqliteKV(db, namespace, clock?)` with async `get(key) → string|null`, `put(key, value, { expirationTtl? })`, `delete(key)`; `new FeedStore(db, clock?)` with `addCheck(steamId64, ts?)`, `takePending(limit) → string[]`, `pendingCount() → number`, `getPlayer(id) → {steamid,name,avatarHash,visible,fetchedAt}|null`, `freshPlayerIds(ids, maxAgeMs) → Set`, `completePending(ids, players[{steamid,name,avatarHash,visible,fetchedAt}])`, `recent(sinceTs, limit) → [{steamId64,name,avatarHash,lastTs,count}]`, `hourCount(sinceTs) → number` (checks of visible players only), `seen(steamId64, sinceTs) → {lastTs,count}|null`, `purge(now?)`; `new RateLimiter(limit, windowMs, clock?)` with `allow(key) → boolean`.
 
 - [ ] **Step 1: Write the failing test** — `test/store.test.js`
 
@@ -1068,7 +1068,7 @@ test('FeedStore: checks feed pending; completion stores players atomically', () 
   assert.equal(store.pendingCount(), 0);
   const recent = store.recent(clock() - 3_600_000, 10);
   assert.deepEqual(recent, [{ steamId64: A, name: 'akamai', avatarHash: 'a'.repeat(40), lastTs: clock(), count: 2 }]);
-  assert.equal(store.hourCount(clock() - 3_600_000), 3);
+  assert.equal(store.hourCount(clock() - 3_600_000), 2); // B is private: not counted
   assert.deepEqual(store.seen(A, clock() - 3_600_000), { lastTs: clock(), count: 2 });
   assert.equal(store.seen('76561197960287999', clock() - 3_600_000), null);
 });
@@ -1196,7 +1196,8 @@ export class FeedStore {
         'WHERE c.ts >= ? AND p.visible = 1 ' +
         'GROUP BY c.steamid ORDER BY lastTs DESC LIMIT ?'
       ),
-      hourCount: db.prepare('SELECT COUNT(*) AS n FROM checks WHERE ts >= ?'),
+      // Only checks of shown players count, so the number cannot reveal private ones.
+      hourCount: db.prepare('SELECT COUNT(*) AS n FROM checks c JOIN players p ON p.steamid = c.steamid WHERE c.ts >= ? AND p.visible = 1'),
       seen: db.prepare('SELECT MAX(ts) AS lastTs, COUNT(*) AS count FROM checks WHERE steamid = ? AND ts >= ?'),
       purgeChecks: db.prepare('DELETE FROM checks WHERE ts < ?'),
       purgePlayers: db.prepare('DELETE FROM players WHERE fetched_at < ? AND steamid NOT IN (SELECT steamid FROM checks)'),
@@ -1713,6 +1714,22 @@ test('handle: HEAD on the stream opens no client; other methods get 405', async 
   assert.equal(post.status, 405);
 });
 
+test('hourCount excludes opted-out players; nothing is served after stop', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'feed-count-'));
+  const hiddenFile = join(dir, 'hidden.txt');
+  writeFileSync(hiddenFile, `${B}\n`);
+  const { feed } = makeFeed({ extra: { hiddenIdsFile: hiddenFile } });
+  feed.recordHit({ steamId64: A, ipHash: '1' });
+  feed.recordHit({ steamId64: B, ipHash: '2' });
+  feed.recordHit({ steamId64: B, ipHash: '3' });
+  await feed.tick();
+  assert.equal((await (await feed.handle(new Request('https://example.com/api/recent.json'))).json()).hourCount, 1);
+  assert.equal(feed.teaser('22202').hourCount, 1);
+  await feed.stop();
+  assert.equal(feed.recordHit({ steamId64: A, ipHash: '4' }), false);
+  assert.equal((await feed.handle(new Request('https://example.com/api/stream'))).status, 503);
+});
+
 test('stop: waits for an in-flight tick', async () => {
   const clock = () => 1;
   let release;
@@ -1742,6 +1759,17 @@ test('SseHub: snapshot on connect, broadcast, client removed on cancel, capacity
   assert.match(await readEvent(reader), /event: entries\ndata: \{"n":2\}\n\n/);
   await reader.cancel();
   assert.equal(hub.size, 0);
+});
+
+test('SseHub: at most maxPerKey streams per client key', () => {
+  const hub = new SseHub({ maxPerKey: 2 });
+  assert.ok(hub.connect({}, 'ip-1'));
+  assert.ok(hub.connect({}, 'ip-1'));
+  assert.equal(hub.connect({}, 'ip-1'), null);
+  assert.ok(hub.connect({}, 'ip-2'));
+  hub.stop();
+  assert.equal(hub.size, 0);
+  assert.equal(hub.perKey.size, 0);
 });
 
 test('SseHub: a client that stops reading is dropped once its queue is full', () => {
@@ -1787,29 +1815,45 @@ const MAX_QUEUED_FRAMES = 64;
 // Server-Sent Events fan-out. Each client is a ReadableStream controller; a
 // client that disconnects cancels its stream and is dropped.
 export class SseHub {
-  constructor({ maxClients = 2000, heartbeatMs = 25_000 } = {}) {
+  constructor({ maxClients = 2000, maxPerKey = 4, heartbeatMs = 25_000 } = {}) {
     this.maxClients = maxClients;
+    this.maxPerKey = maxPerKey;
     this.heartbeatMs = heartbeatMs;
     this.clients = new Set();
+    this.keyOf = new Map();   // controller -> client key (IP)
+    this.perKey = new Map();  // key -> open streams
     this.timer = null;
+  }
+
+  remove(c) {
+    if (!this.clients.delete(c)) return;
+    const key = this.keyOf.get(c);
+    this.keyOf.delete(c);
+    const n = (this.perKey.get(key) || 1) - 1;
+    if (n > 0) this.perKey.set(key, n);
+    else this.perKey.delete(key);
   }
 
   get size() {
     return this.clients.size;
   }
 
-  connect(snapshot) {
+  // `key` identifies the client (its IP) so one peer cannot take every slot.
+  connect(snapshot, key = '') {
     if (this.clients.size >= this.maxClients) return null;
+    if ((this.perKey.get(key) || 0) >= this.maxPerKey) return null;
     const hub = this;
     let controller;
     const stream = new ReadableStream({
       start(c) {
         controller = c;
         hub.clients.add(c);
+        hub.keyOf.set(c, key);
+        hub.perKey.set(key, (hub.perKey.get(key) || 0) + 1);
         c.enqueue(encoder.encode(`retry: 5000\nevent: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`));
       },
       cancel() {
-        hub.clients.delete(controller);
+        hub.remove(controller);
       }
     }, { highWaterMark: MAX_QUEUED_FRAMES });
     return new Response(stream, {
@@ -1826,12 +1870,12 @@ export class SseHub {
       try {
         if (c.desiredSize !== null && c.desiredSize <= 0) {
           c.close(); // lagging client: it will reconnect and get a fresh snapshot
-          this.clients.delete(c);
+          this.remove(c);
           continue;
         }
         c.enqueue(chunk);
       } catch {
-        this.clients.delete(c);
+        this.remove(c);
       }
     }
   }
@@ -1849,10 +1893,10 @@ export class SseHub {
   stop() {
     clearInterval(this.timer);
     this.timer = null;
-    for (const c of this.clients) {
+    for (const c of [...this.clients]) {
       try { c.close(); } catch { /* already closed */ }
+      this.remove(c);
     }
-    this.clients.clear();
   }
 }
 ```
@@ -1870,6 +1914,7 @@ import { SseHub } from './sse.js';
 
 const STEAM64_RE = /^7656119\d{10}$/;
 const RECENT_LIMIT = 200;
+const MAX_PENDING = 5000; // beyond this, hits are dropped until Steam catches up
 const FIRST_TICK_MS = 30_000;
 
 function json(data, status = 200, headers = {}) {
@@ -1901,8 +1946,18 @@ export function createFeed({
       .map(e => ({ steamId64: e.steamId64, dotaId: convertToDota2Id(e.steamId64), name: e.name, avatarHash: e.avatarHash, lastTs: e.lastTs, count: e.count }));
   }
 
+  // Visible players only (store), minus opted-out ones (hidden list).
+  function hourCount() {
+    const since = clock() - HOUR_MS;
+    let n = store.hourCount(since);
+    for (const id of hidden) {
+      if (store.getPlayer(id)?.visible) n -= store.seen(id, since)?.count ?? 0;
+    }
+    return n;
+  }
+
   function snapshot() {
-    return { hourCount: store.hourCount(clock() - HOUR_MS), generatedAt: clock(), entries: recentEntries() };
+    return { hourCount: hourCount(), generatedAt: clock(), entries: recentEntries() };
   }
 
   const enricher = new Enricher({
@@ -1920,17 +1975,19 @@ export function createFeed({
       }
       const wanted = new Set(ids);
       const entries = recentEntries().filter(e => wanted.has(e.steamId64));
-      if (entries.length) hub.broadcast('entries', { hourCount: store.hourCount(clock() - HOUR_MS), entries });
+      if (entries.length) hub.broadcast('entries', { hourCount: hourCount(), entries });
     }
   });
 
-  let current = null;
+  const ticks = new Set(); // in-flight ticks; stop() waits for all of them
+  let stopped = false;
   async function tick() {
-    current = enricher.tick();
+    const p = enricher.tick();
+    ticks.add(p);
     try {
-      return await current;
+      return await p;
     } finally {
-      current = null;
+      ticks.delete(p);
       lastTickAt = clock();
     }
   }
@@ -1949,7 +2006,8 @@ export function createFeed({
 
   return {
     recordHit({ steamId64, ipHash }) {
-      if (!STEAM64_RE.test(String(steamId64))) return false;
+      if (stopped || !STEAM64_RE.test(String(steamId64))) return false;
+      if (store.pendingCount() >= MAX_PENDING) return false;
       if (!perIp.allow(ipHash || '-') || !perPlayer.allow(steamId64)) return false;
       store.addCheck(steamId64, clock());
       return true;
@@ -1963,7 +2021,7 @@ export function createFeed({
         seen = store.seen(steamId64, now - HOUR_MS);
       }
       return {
-        hourCount: store.hourCount(now - HOUR_MS),
+        hourCount: hourCount(),
         seen,
         faces: recentEntries(3).map(e => e.avatarHash).filter(Boolean)
       };
@@ -1971,6 +2029,7 @@ export function createFeed({
 
     async handle(request) {
       const { pathname } = new URL(request.url);
+      if (stopped) return json({ error: 'shutting down' }, 503);
       if (request.method !== 'GET' && request.method !== 'HEAD') {
         return json({ error: 'method not allowed' }, 405, { Allow: 'GET, HEAD' });
       }
@@ -1980,7 +2039,9 @@ export function createFeed({
       if (pathname === '/api/stream') {
         // HEAD must not open a stream: nobody would ever read or cancel it.
         if (request.method === 'HEAD') return new Response(null, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' } });
-        return hub.connect(snapshot()) ?? json({ error: 'busy' }, 503, { 'Retry-After': '30' });
+        // CF-Connecting-IP is trustworthy because the reverse proxy only admits Cloudflare.
+        const key = request.headers.get('cf-connecting-ip') || '';
+        return hub.connect(snapshot(), key) ?? json({ error: 'busy' }, 503, { 'Retry-After': '30' });
       }
       return json({ error: 'not found' }, 404);
     },
@@ -2000,6 +2061,7 @@ export function createFeed({
     start() {
       if (running) return;
       running = true;
+      stopped = false;
       hub.start();
       schedule(FIRST_TICK_MS);
       purgeTimer = setInterval(() => {
@@ -2010,11 +2072,12 @@ export function createFeed({
 
     // Resolves once an in-flight tick has finished, so the caller can close the DB.
     async stop() {
+      stopped = true;
       running = false;
       clearTimeout(timer);
       clearInterval(purgeTimer);
       hub.stop();
-      if (current) await current.catch(() => {});
+      await Promise.allSettled([...ticks]);
     }
   };
 }
@@ -2189,6 +2252,7 @@ function toWebRequest(req, url) {
 }
 
 function waitDrain(res) {
+  if (res.destroyed || res.writableEnded) return Promise.resolve();
   return new Promise(resolve => {
     const done = () => {
       res.off('drain', done);
@@ -2210,6 +2274,7 @@ async function writeWebResponse(response, req, res) {
     return;
   }
   const reader = response.body.getReader();
+  res.on('error', () => {}); // a client abort must never become an unhandled error
   res.on('close', () => { reader.cancel().catch(() => {}); });
   try {
     for (;;) {
@@ -2223,7 +2288,7 @@ async function writeWebResponse(response, req, res) {
   } catch {
     // client went away or the stream was cancelled
   }
-  res.end();
+  if (!res.destroyed && !res.writableEnded) res.end();
 }
 
 async function serveAsset(path, res) {
@@ -2285,7 +2350,7 @@ export function createServer({ env = process.env, dbPath = env.DB_PATH || './dat
 
   const active = new Set();
   const server = http.createServer((req, res) => {
-    const p = handle(req, res);
+    const p = handle(req, res).catch(e => log.error('Request failed after response started:', e));
     active.add(p);
     p.finally(() => active.delete(p));
   });
@@ -2303,6 +2368,7 @@ export function createServer({ env = process.env, dbPath = env.DB_PATH || './dat
     ]);
     server.closeAllConnections?.();
     await closed;
+    await Promise.allSettled([...active]); // handlers woken by the forced close
     await Promise.allSettled([...inflight]);
     db.close();
   }

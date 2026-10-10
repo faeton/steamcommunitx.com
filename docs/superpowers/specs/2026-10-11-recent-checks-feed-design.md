@@ -93,7 +93,8 @@ CREATE INDEX checks_ts ON checks(ts);
 ### `recordHit`
 
 - Validates the SteamID64.
-- Rate limits: ≤ 20 hits/min per `ipHash` and ≤ 6 hits/min per steamid. Excess is silently dropped.
+- Rate limits: ≤ 20 hits/min per `ipHash` and ≤ 6 hits/min per steamid, and no new hits while ≥ 5,000 ids are waiting for enrichment. Excess is silently dropped.
+- `hourCount` counts only checks of shown players (visible and not opted out), so it cannot reveal private or hidden ones.
 - Appends to `checks` and upserts `pending`.
 
 ### Enrichment tick (every 30 s, only when `pending` is non-empty)
@@ -117,7 +118,7 @@ Same origin as the site, so no CORS.
   - On connect it sends `event: snapshot` (the recent payload).
   - It then sends `event: entries` per tick.
   - Heartbeat comment every 25 s.
-  - At most 2,000 clients; above that it returns 503 and the client falls back to polling.
+  - At most 2,000 clients and 4 per client IP (`CF-Connecting-IP`, trusted because the proxy only admits Cloudflare); above that it returns 503 and the client falls back to polling.
 - `GET /healthz` (served by the Node adapter) → `{ ok, feed: { pending, lastTickAt, clients } | null }`.
 
 ### Hygiene
