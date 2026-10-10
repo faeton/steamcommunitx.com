@@ -72,13 +72,13 @@ Mostly a move of today's `worker.js` logic, with these changes:
    - The `<meta http-equiv="refresh">` fallback moves into `<noscript>` on both runtimes, so the JS timer is the only redirect when JS runs.
    - With the feed on, the redirect response is `Cache-Control: no-store`, because the teaser is live and every visit must reach the origin to be counted. Without the feed it stays `max-age=300` as today.
 4. **Home page.** When `env.FEED` exists, render the feed section (Component 3) between the hero and the examples. The HTML stays static; data comes from same-origin `/api/*`.
-5. **Routing.** `/api/*` and `/healthz` are dispatched to `env.FEED.handle(request)` before `parseRoute`. Without `env.FEED`, they fall through to today's behaviour (404 page).
+5. **Routing.** `/api/*` is dispatched to `env.FEED.handle(request)` before `parseRoute`. Without `env.FEED` it falls through to today's behaviour (404 page). `/healthz` and `/assets/*` are served by the Node adapter itself, so `/healthz` answers even with the feed disabled.
 
 ## Component 2 — Feed module (`src/feed/`, Node only)
 
 - **Stack:** Node 24 built-ins only (`node:sqlite`, `node:http` via the adapter, `fetch`). Zero runtime dependencies.
 - **Config (env):** `STEAM_API_KEY` / `STEAM_API_KEYS` (shared with core), `DB_PATH`, optional `BLOCKED_WORDS_FILE`, optional `HIDDEN_IDS_FILE`.
-- **Memory first, SQLite for durability.** The hot set (last 60 min of checks, the pending queue, the player cache) lives in memory. It is written through to SQLite so a restart loses nothing.
+- **SQLite only.** At this volume (~40k checks/day) indexed SQLite queries (WAL mode) are fast enough, so there is no separate in-memory cache, and a restart loses nothing.
 
 ### Data model (SQLite)
 
@@ -118,7 +118,7 @@ Same origin as the site, so no CORS.
   - It then sends `event: entries` per tick.
   - Heartbeat comment every 25 s.
   - At most 2,000 clients; above that it returns 503 and the client falls back to polling.
-- `GET /healthz` → 200 with queue depth and last tick time.
+- `GET /healthz` (served by the Node adapter) → `{ ok, feed: { pending, lastTickAt, clients } | null }`.
 
 ### Hygiene
 
@@ -126,7 +126,7 @@ Same origin as the site, so no CORS.
   - Strip control characters and bidi overrides/isolates (U+202A–202E, U+2066–2069).
   - Keep at most 2 combining marks per base character (anti-zalgo).
   - Cap at 32 graphemes.
-  - Words from `BLOCKED_WORDS_FILE` are matched case-insensitively after NFKC and masked as `•••`.
+  - Words from `BLOCKED_WORDS_FILE` are matched case-insensitively after NFKC and masked with `•`, one bullet per character.
 - **Avatars:** only the hash is stored. The client builds `https://avatars.steamstatic.com/{hash}_medium.jpg`.
 - **Opt-out:** `HIDDEN_IDS_FILE` holds SteamID64s, one per line, re-read on `SIGHUP`. Listed players never appear. Requests come through the contact or issue link in the README.
 - **Retention:** `checks` older than 24 h, `players` unseen for 7 days and expired `kv` rows are purged hourly. IPs are never stored.
