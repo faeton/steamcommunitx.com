@@ -40,7 +40,7 @@
 | `worker.js` (rewrite) | Cloudflare adapter: default export `{ fetch }` → `handleRequest`; re-exports for back-compat. |
 | `src/core.js` (new, moved code) | API-key helpers, `getId`, ID conversion (`convertToDota2Id`, `toSteamId64`, `accountIdToSteamId64`), `parseRoute`, `isRealBrowser`, `ipHash`, `handleRequest`. |
 | `src/pages.js` (new, moved code) | `analyticsSnippet`, `resolveBanners`, `indexPage`, `errorPage`, `redirectPage`, `renderTeaser`, `escapeHtml`. |
-| `src/client/feed-shared.js` | Pure helpers shared by server + browser: i18n (`pickLang`, `t`, `ago`), `avatarUrl`, search (`splitTerms`, `matchesTerms`, `highlightRanges`), `timeBlock`, `dripDelay`, `diffEntries`. |
+| `src/client/feed-shared.js` | Pure helpers shared by server + browser: i18n (`pickLang`, `t`, `ago`), `avatarUrl`, search (`splitTerms`, `matchesTerms`, `highlightRanges`), `timeBlock`, `dripDelay`, `isNewer`, `diffEntries`, `idsToRemove`. |
 | `src/client/feed.js` | Browser feed UI (DOM, SSE/polling, drip, split-flap, catch/release, filter). Served at `/assets/feed.js`. |
 | `src/feed/sanitize.js` | `sanitizeName`, `maskBlocked`, `loadWords`, `loadIds`. |
 | `src/feed/store.js` | `openDb`, `SqliteKV` (KV shim), `FeedStore` (checks/pending/players queries). |
@@ -155,7 +155,7 @@ handler can also run under Node. No behaviour change."
 - Test: `test/core.test.js`
 
 **Interfaces:**
-- Produces (`src/client/feed-shared.js`): `AVATAR_HASH_RE`, `HOUR_MS`, `avatarUrl(hash) → string`, `pickLang(tag) → 'en'|'ru'|'uk'`, `t(lang, key, vars?) → string`, `ago(lang, ts, now) → string`, `normalize(s)`, `splitTerms(q) → string[]`, `matchesTerms(name, terms) → boolean`, `highlightRanges(name, terms) → [start,end][]`, `timeBlock(ts, now) → 'justNow'|'last5'|'lastHour'`, `dripDelay(queueLen, windowMs?) → ms`, `diffEntries(entries, shown: Map<id,lastTs>) → entries oldest-first`.
+- Produces (`src/client/feed-shared.js`): `AVATAR_HASH_RE`, `HOUR_MS`, `avatarUrl(hash) → string`, `pickLang(tag) → 'en'|'ru'|'uk'`, `t(lang, key, vars?) → string`, `ago(lang, ts, now) → string`, `normalize(s)`, `splitTerms(q) → string[]`, `matchesTerms(name, terms) → boolean`, `highlightRanges(name, terms) → [start,end][]`, `timeBlock(ts, now) → 'justNow'|'last5'|'lastHour'`, `dripDelay(queueLen, windowMs?) → ms`, `isNewer(a, b?) → boolean` (later `lastTs`, or same `lastTs` with higher `count`), `diffEntries(entries, known: Map<id, entry>) → entries oldest-first`, `idsToRemove(shown: Map<id, entry>, snapshotEntries, limit?) → id[]`.
 - Produces (`src/core.js`): `accountIdToSteamId64(acc) → string|null`, `toSteamId64(value) → string|null`, `isRealBrowser(request) → boolean`, `ipHash(ip, now?) → Promise<string>`.
 - Produces (`src/pages.js`): `escapeHtml(s)`, `renderTeaser(teaser, lang, now?) → string`, `indexPage(hostname, analytics, { feed, lang })`, `redirectPage(dest, hostname, analytics, banners, { teaser, lang })`.
 - Consumes `env.FEED` contract (implemented in Task 6): `recordHit({ steamId64, ipHash }) → boolean`, `teaser(dotaId) → { hourCount, seen: {lastTs,count}|null, faces: string[] }`, `handle(request) → Promise<Response>`.
@@ -167,7 +167,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   avatarUrl, pickLang, t, ago, splitTerms, matchesTerms, highlightRanges,
-  timeBlock, dripDelay, diffEntries
+  timeBlock, dripDelay, isNewer, diffEntries, idsToRemove
 } from '../src/client/feed-shared.js';
 
 const HASH = 'fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb';
@@ -227,14 +227,34 @@ test('timeBlock and dripDelay', () => {
   assert.equal(dripDelay(500), 400);
 });
 
-test('diffEntries: only unseen or newer entries, oldest first', () => {
-  const shown = new Map([['a', 100], ['b', 200]]);
+test('isNewer / diffEntries: unseen, later, or same-ms higher count; oldest first', () => {
+  const known = new Map([
+    ['a', { lastTs: 100, count: 1 }],
+    ['b', { lastTs: 200, count: 1 }],
+    ['d', { lastTs: 50, count: 1 }]
+  ]);
   const out = diffEntries([
-    { steamId64: 'c', lastTs: 300 },
-    { steamId64: 'b', lastTs: 250 },
-    { steamId64: 'a', lastTs: 100 }
-  ], shown);
-  assert.deepEqual(out.map(e => e.steamId64), ['b', 'c']);
+    { steamId64: 'c', lastTs: 300, count: 1 },
+    { steamId64: 'b', lastTs: 250, count: 2 },
+    { steamId64: 'a', lastTs: 100, count: 1 },
+    { steamId64: 'd', lastTs: 50, count: 2 }
+  ], known);
+  assert.deepEqual(out.map(e => e.steamId64), ['d', 'b', 'c']);
+  assert.equal(isNewer({ lastTs: 5, count: 1 }, undefined), true);
+  assert.equal(isNewer({ lastTs: 5, count: 1 }, { lastTs: 6, count: 1 }), false);
+  assert.equal(isNewer({ lastTs: 6, count: 1 }, { lastTs: 6, count: 1 }), false);
+});
+
+test('idsToRemove: rows missing from an authoritative snapshot', () => {
+  const shown = new Map([
+    ['keep', { lastTs: 500 }],
+    ['gone', { lastTs: 400 }],
+    ['old', { lastTs: 10 }]
+  ]);
+  assert.deepEqual(idsToRemove(shown, [{ steamId64: 'keep', lastTs: 500 }]).sort(), ['gone', 'old']);
+  // A full (truncated) snapshot only speaks for its own time range.
+  const full = [{ steamId64: 'keep', lastTs: 500 }, { steamId64: 'x', lastTs: 300 }];
+  assert.deepEqual(idsToRemove(shown, full, 2), ['gone']);
 });
 ```
 
@@ -393,10 +413,23 @@ export function dripDelay(queueLen, windowMs = 30000) {
   return Math.min(3000, Math.max(400, Math.floor(windowMs / queueLen)));
 }
 
-export function diffEntries(entries, shown) {
+// a supersedes b: a later check, or the same millisecond with a higher count.
+export function isNewer(a, b) {
+  return !b || a.lastTs > b.lastTs || (a.lastTs === b.lastTs && a.count > b.count);
+}
+
+export function diffEntries(entries, known) {
   return entries
-    .filter(e => !(shown.get(e.steamId64) >= e.lastTs))
+    .filter(e => isNewer(e, known.get(e.steamId64)))
     .sort((a, b) => a.lastTs - b.lastTs);
+}
+
+// Snapshots are authoritative: anything shown but absent (opted out, went
+// private) is removed. A snapshot cut at `limit` only covers its own time range.
+export function idsToRemove(shown, entries, limit = 200) {
+  const present = new Set(entries.map(e => e.steamId64));
+  const floor = entries.length >= limit ? Math.min(...entries.map(e => e.lastTs)) : -Infinity;
+  return [...shown].filter(([id, e]) => !present.has(id) && e.lastTs >= floor).map(([id]) => id);
 }
 ```
 
@@ -1294,7 +1327,7 @@ Pending completion is transactional so a failed batch can be retried."
 
 **Interfaces:**
 - Consumes: `getAvailableApiKeys, markProblemKey, markRateLimitedKey` from `src/core.js`; `sanitizeName` (Task 3); `FeedStore` (Task 4); `AVATAR_HASH_RE` (Task 2).
-- Produces: `createSteamSummaries({ env, fetchImpl?, timeoutMs? }) → async (ids[]) → SteamPlayer[]`; `toPlayerRow(summary, blockedWords, now) → playerRow`; `new Enricher({ store, fetchSummaries, onEntries, blockedWords: () => string[], clock?, log? })` with `tick() → Promise<{ processed, error? }>`, `nextDelay() → ms`, `failures`.
+- Produces: `createSteamSummaries({ env, fetchImpl?, timeoutMs? }) → async (ids[]) → SteamPlayer[]` (throws on malformed payloads); `toPlayerRow(summary, blockedWords, now) → playerRow`; `new Enricher({ store, fetchSummaries, onEntries(ids, removedIds), blockedWords: () => string[], clock?, log? })` with `tick() → Promise<{ processed, error? }>`, `nextDelay() → ms`, `failures`. `removedIds` = ids that were visible before this tick and are not any more (went private / vanished).
 
 - [ ] **Step 1: Write the failing test** — `test/enrich.test.js`
 
@@ -1329,6 +1362,27 @@ test('createSteamSummaries: calls GetPlayerSummaries and rotates past a rejected
   assert.equal(players[0].steamid, id(1));
   assert.match(urls[0], /ISteamUser\/GetPlayerSummaries\/v2\/\?key=bad&steamids=76561197960265729/);
   assert.match(urls[1], /key=good/);
+});
+
+test('createSteamSummaries: a 200 without a players array is an error', async () => {
+  const fetchSummaries = createSteamSummaries({ env: { STEAM_API_KEY: 'k' }, fetchImpl: async () => Response.json({}) });
+  await assert.rejects(fetchSummaries([id(1)]), /malformed/);
+});
+
+test('Enricher.tick: reports players that turned private since the last fetch', async () => {
+  const store = new FeedStore(openDb(':memory:'), () => 100 * 3_600_000);
+  store.addCheck(id(1));
+  store.completePending([id(1)], [{ steamid: id(1), name: 'was public', avatarHash: HASH, visible: 1, fetchedAt: 0 }]);
+  store.addCheck(id(1));
+  const seen = [];
+  const enricher = new Enricher({
+    store,
+    fetchSummaries: async ids => ids.map(s => summary(s, { communityvisibilitystate: 1 })),
+    onEntries: (ids, removed) => seen.push(removed),
+    blockedWords: () => [], clock: () => 100 * 3_600_000, log: quiet
+  });
+  await enricher.tick();
+  assert.deepEqual(seen, [[id(1)]]);
 });
 
 test('createSteamSummaries: no keys is an error', async () => {
@@ -1442,7 +1496,11 @@ export function createSteamSummaries({ env, fetchImpl = fetch, timeoutMs = 5000 
         }
         if (!res.ok) throw new Error(`Steam HTTP ${res.status}`);
         const data = await res.json();
-        return data?.response?.players ?? [];
+        const players = data?.response?.players;
+        // A 200 without a players array is not "everyone vanished": fail so the
+        // ids stay queued and the tick backs off.
+        if (!Array.isArray(players)) throw new Error('Steam returned a malformed GetPlayerSummaries payload');
+        return players;
       } catch (e) {
         lastError = e;
       }
@@ -1479,6 +1537,7 @@ export class Enricher {
     const now = this.clock();
     const fresh = this.store.freshPlayerIds(ids, FRESH_MS);
     const stale = ids.filter(id => !fresh.has(id));
+    const wasVisible = new Set(stale.filter(id => this.store.getPlayer(id)?.visible));
     const players = [];
     try {
       for (let i = 0; i < stale.length; i += CHUNK) {
@@ -1499,7 +1558,8 @@ export class Enricher {
     }
     this.failures = 0;
     this.store.completePending(ids, players);
-    this.onEntries(ids);
+    const removed = players.filter(p => !p.visible && wasVisible.has(p.steamid)).map(p => p.steamid);
+    this.onEntries(ids, removed);
     return { processed: ids.length };
   }
 }
@@ -1528,7 +1588,7 @@ and doubles the delay up to 5 minutes."
 
 **Interfaces:**
 - Consumes: Tasks 2–5 (`convertToDota2Id`, `accountIdToSteamId64`, `HOUR_MS`, `loadWords`, `loadIds`, `FeedStore`, `RateLimiter`, `createSteamSummaries`, `Enricher`).
-- Produces: `new SseHub({ maxClients?, heartbeatMs? })` with `connect(snapshot) → Response|null`, `broadcast(event, data)`, `start()`, `stop()`, `size`; `createFeed({ db, env, fetchImpl?, clock?, blockedWordsFile?, hiddenIdsFile?, log? }) → { recordHit, teaser, handle, health, reloadLists, start, stop, tick }` — this is the `env.FEED` contract from Task 2, plus `health() → { pending, lastTickAt, clients }`.
+- Produces: `new SseHub({ maxClients?, heartbeatMs? })` with `connect(snapshot) → Response|null`, `broadcast(event, data)`, `start()`, `stop()`, `size`; `createFeed({ db, env, fetchImpl?, clock?, blockedWordsFile?, hiddenIdsFile?, log?, maxClients? }) → { recordHit, teaser, handle, health, reloadLists, start, stop: () => Promise<void>, tick }`. SSE events: `snapshot` (authoritative, also re-sent on removals/list reloads), `entries` (additions/updates). — this is the `env.FEED` contract from Task 2, plus `health() → { pending, lastTickAt, clients }`.
 
 - [ ] **Step 1: Write the failing test** — `test/feed.test.js`
 
@@ -1625,7 +1685,7 @@ test('private and hidden players never leak: recent, teaser, SSE', async () => {
   await reader.cancel();
 });
 
-test('reloadLists: picks up a newly hidden id', async () => {
+test('reloadLists: hides the id and pushes an authoritative snapshot to clients', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'feed-reload-'));
   const hiddenFile = join(dir, 'hidden.txt');
   writeFileSync(hiddenFile, '');
@@ -1633,9 +1693,42 @@ test('reloadLists: picks up a newly hidden id', async () => {
   feed.recordHit({ steamId64: A, ipHash: '1' });
   await feed.tick();
   assert.equal((await (await feed.handle(new Request('https://example.com/api/recent.json'))).json()).entries.length, 1);
+  const reader = (await feed.handle(new Request('https://example.com/api/stream'))).body.getReader();
+  await readEvent(reader); // initial snapshot
   writeFileSync(hiddenFile, `${A}\n`);
   feed.reloadLists();
+  const pushed = await readEvent(reader);
+  assert.match(pushed, /^event: snapshot\n/);
+  assert.doesNotMatch(pushed, new RegExp(A));
   assert.equal((await (await feed.handle(new Request('https://example.com/api/recent.json'))).json()).entries.length, 0);
+  await reader.cancel();
+});
+
+test('handle: HEAD on the stream opens no client; other methods get 405', async () => {
+  const { feed } = makeFeed();
+  const head = await feed.handle(new Request('https://example.com/api/stream', { method: 'HEAD' }));
+  assert.equal(head.status, 200);
+  assert.equal(feed.health().clients, 0);
+  const post = await feed.handle(new Request('https://example.com/api/recent.json', { method: 'POST' }));
+  assert.equal(post.status, 405);
+});
+
+test('stop: waits for an in-flight tick', async () => {
+  const clock = () => 1;
+  let release;
+  const slowSteam = () => new Promise(r => { release = () => r(Response.json({ response: { players: [] } })); });
+  const feed = createFeed({ db: openDb(':memory:'), env: { STEAM_API_KEY: 'k' }, fetchImpl: slowSteam, clock, log: quiet });
+  feed.recordHit({ steamId64: A, ipHash: '1' });
+  const ticking = feed.tick();
+  await new Promise(r => setImmediate(r));
+  let stopped = false;
+  const stopping = feed.stop().then(() => { stopped = true; });
+  await new Promise(r => setImmediate(r));
+  assert.equal(stopped, false);
+  release();
+  await ticking;
+  await stopping;
+  assert.equal(stopped, true);
 });
 
 test('SseHub: snapshot on connect, broadcast, client removed on cancel, capacity', async () => {
@@ -1648,6 +1741,13 @@ test('SseHub: snapshot on connect, broadcast, client removed on cancel, capacity
   hub.broadcast('entries', { n: 2 });
   assert.match(await readEvent(reader), /event: entries\ndata: \{"n":2\}\n\n/);
   await reader.cancel();
+  assert.equal(hub.size, 0);
+});
+
+test('SseHub: a client that stops reading is dropped once its queue is full', () => {
+  const hub = new SseHub();
+  hub.connect({});
+  for (let i = 0; i < 100; i++) hub.broadcast('entries', { i });
   assert.equal(hub.size, 0);
 });
 
@@ -1680,6 +1780,10 @@ function frame(event, data) {
   return encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
+// Frames buffered for one client before it counts as too slow and is dropped,
+// so a stalled connection cannot grow memory without bound.
+const MAX_QUEUED_FRAMES = 64;
+
 // Server-Sent Events fan-out. Each client is a ReadableStream controller; a
 // client that disconnects cancels its stream and is dropped.
 export class SseHub {
@@ -1702,13 +1806,12 @@ export class SseHub {
       start(c) {
         controller = c;
         hub.clients.add(c);
-        c.enqueue(encoder.encode('retry: 5000\n'));
-        c.enqueue(frame('snapshot', snapshot));
+        c.enqueue(encoder.encode(`retry: 5000\nevent: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`));
       },
       cancel() {
         hub.clients.delete(controller);
       }
-    });
+    }, { highWaterMark: MAX_QUEUED_FRAMES });
     return new Response(stream, {
       headers: {
         'Content-Type': 'text/event-stream',
@@ -1721,6 +1824,11 @@ export class SseHub {
   send(chunk) {
     for (const c of this.clients) {
       try {
+        if (c.desiredSize !== null && c.desiredSize <= 0) {
+          c.close(); // lagging client: it will reconnect and get a fresh snapshot
+          this.clients.delete(c);
+          continue;
+        }
         c.enqueue(chunk);
       } catch {
         this.clients.delete(c);
@@ -1747,12 +1855,6 @@ export class SseHub {
     this.clients.clear();
   }
 }
-```
-
-Note the test reads `retry:` and the snapshot frame as one or two chunks: to keep `readEvent` simple, merge them — replace the two `enqueue` calls in `start` with one:
-
-```js
-        c.enqueue(encoder.encode(`retry: 5000\nevent: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`));
 ```
 
 - [ ] **Step 4: Implement** `src/feed/index.js`
@@ -1809,17 +1911,28 @@ export function createFeed({
     blockedWords: () => blocked,
     clock,
     log,
-    onEntries(ids) {
+    onEntries(ids, removed = []) {
+      // Removals go out as a full snapshot (clients reconcile against it), so
+      // the SteamIDs of players who are no longer shown are never broadcast.
+      if (removed.length) {
+        hub.broadcast('snapshot', snapshot());
+        return;
+      }
       const wanted = new Set(ids);
       const entries = recentEntries().filter(e => wanted.has(e.steamId64));
       if (entries.length) hub.broadcast('entries', { hourCount: store.hourCount(clock() - HOUR_MS), entries });
     }
   });
 
+  let current = null;
   async function tick() {
-    const result = await enricher.tick();
-    lastTickAt = clock();
-    return result;
+    current = enricher.tick();
+    try {
+      return await current;
+    } finally {
+      current = null;
+      lastTickAt = clock();
+    }
   }
 
   function schedule(ms) {
@@ -1858,10 +1971,15 @@ export function createFeed({
 
     async handle(request) {
       const { pathname } = new URL(request.url);
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        return json({ error: 'method not allowed' }, 405, { Allow: 'GET, HEAD' });
+      }
       if (pathname === '/api/recent.json') {
         return json(snapshot(), 200, { 'Cache-Control': 'public, max-age=10' });
       }
       if (pathname === '/api/stream') {
+        // HEAD must not open a stream: nobody would ever read or cancel it.
+        if (request.method === 'HEAD') return new Response(null, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' } });
         return hub.connect(snapshot()) ?? json({ error: 'busy' }, 503, { 'Retry-After': '30' });
       }
       return json({ error: 'not found' }, 404);
@@ -1874,6 +1992,7 @@ export function createFeed({
     reloadLists() {
       blocked = loadWords(blockedWordsFile, log);
       hidden = loadIds(hiddenIdsFile, log);
+      hub.broadcast('snapshot', snapshot()); // connected clients drop newly hidden rows
     },
 
     tick,
@@ -1889,11 +2008,13 @@ export function createFeed({
       purgeTimer.unref?.();
     },
 
-    stop() {
+    // Resolves once an in-flight tick has finished, so the caller can close the DB.
+    async stop() {
       running = false;
       clearTimeout(timer);
       clearInterval(purgeTimer);
       hub.stop();
+      if (current) await current.catch(() => {});
     }
   };
 }
@@ -1979,6 +2100,10 @@ test('server with feed: home, redirect + hit, recent.json, assets, healthz', asy
     assert.equal(health.ok, true);
     assert.equal(health.feed.pending, 0);
 
+    const headStream = await fetch(`${app.base}/api/stream`, { method: 'HEAD' });
+    assert.equal(headStream.status, 200);
+    assert.equal(app.feed.health().clients, 0);
+
     const head = await fetch(`${app.base}/`, { method: 'HEAD' });
     assert.equal(head.status, 200);
     assert.equal(await head.text(), '');
@@ -2063,11 +2188,24 @@ function toWebRequest(req, url) {
   return new Request(url.href, { method: req.method, headers });
 }
 
+function waitDrain(res) {
+  return new Promise(resolve => {
+    const done = () => {
+      res.off('drain', done);
+      res.off('close', done);
+      resolve();
+    };
+    res.on('drain', done);
+    res.on('close', done);
+  });
+}
+
 async function writeWebResponse(response, req, res) {
   const headers = {};
   response.headers.forEach((value, name) => { headers[name] = value; });
   res.writeHead(response.status, headers);
   if (req.method === 'HEAD' || !response.body) {
+    response.body?.cancel().catch(() => {}); // never leave a body (e.g. an SSE stream) unread
     res.end();
     return;
   }
@@ -2077,7 +2215,10 @@ async function writeWebResponse(response, req, res) {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      res.write(value);
+      // Respect socket backpressure; a stalled SSE client then fills its own
+      // bounded queue in SseHub and gets dropped.
+      if (!res.write(value)) await waitDrain(res);
+      if (res.destroyed) break;
     }
   } catch {
     // client went away or the stream was cancelled
@@ -2122,7 +2263,7 @@ export function createServer({ env = process.env, dbPath = env.DB_PATH || './dat
     }
   };
 
-  const server = http.createServer(async (req, res) => {
+  async function handle(req, res) {
     try {
       const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
       if (url.pathname === '/healthz') {
@@ -2140,12 +2281,28 @@ export function createServer({ env = process.env, dbPath = env.DB_PATH || './dat
       if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'text/plain' });
       res.end('Internal Server Error');
     }
+  }
+
+  const active = new Set();
+  const server = http.createServer((req, res) => {
+    const p = handle(req, res);
+    active.add(p);
+    p.finally(() => active.delete(p));
   });
 
+  // Order matters: stop the feed (ends SSE streams, waits for a running tick),
+  // stop accepting connections, let in-flight requests finish (5 s cap), then
+  // drop what is left and only then close SQLite.
   async function close() {
-    feed?.stop();
+    await feed?.stop();
+    const closed = new Promise(r => server.close(() => r()));
+    server.closeIdleConnections?.();
+    await Promise.race([
+      Promise.allSettled([...active]),
+      new Promise(r => setTimeout(r, 5000).unref())
+    ]);
     server.closeAllConnections?.();
-    await new Promise(r => server.close(() => r()));
+    await closed;
     await Promise.allSettled([...inflight]);
     db.close();
   }
@@ -2227,12 +2384,13 @@ blocked-words and hidden-ids lists."
 // All nickname text goes through DOM text nodes, never innerHTML.
 import {
   t, ago, pickLang, avatarUrl, splitTerms, matchesTerms, highlightRanges,
-  timeBlock, dripDelay, diffEntries, HOUR_MS
+  timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, HOUR_MS
 } from './feed-shared.js';
 
 const ROW = 56;
 const IDLE_MS = 8000;
 const LEAVE_MS = 1500;
+const HOVER_MAX_MS = 30000; // a cursor parked on the list does not freeze it forever
 const BURST = 3;
 const MAX_DRIP = 60;
 const MAX_ROWS = 200;
@@ -2255,6 +2413,7 @@ const liveEl = $('feed-live');
 const baseTitle = document.title;
 
 const rows = new Map();   // steamId64 -> row element (row._e holds the entry)
+const latest = new Map(); // steamId64 -> newest known entry, shown or still queued
 const held = [];          // entries that arrived while paused
 const incoming = [];      // entries waiting to drip in
 let terms = [];
@@ -2264,6 +2423,7 @@ let paused = false;
 let hover = false;
 let releaseTimer = null;
 let lastIntent = 0;
+let ignoreScrollUntil = 0;
 let dripTimer = null;
 let es = null;
 let pollTimer = null;
@@ -2366,6 +2526,7 @@ function notifyPinned(r) {
 
 function insert(e, animate) {
   const old = rows.get(e.steamId64);
+  if (old && !isNewer(e, old._e)) return; // a stale queued copy must not overwrite newer data
   if (old) old.remove();
   const r = makeRow(e);
   rows.set(e.steamId64, r);
@@ -2380,6 +2541,7 @@ function trim() {
   all.forEach((r, i) => {
     if (i >= MAX_ROWS || r._e.lastTs < cutoff) {
       rows.delete(r._e.steamId64);
+      latest.delete(r._e.steamId64);
       r.remove();
     }
   });
@@ -2416,6 +2578,21 @@ function renderCount() {
 }
 
 // ---- drip ----
+
+function removeIds(ids) {
+  if (!ids.length) return;
+  const gone = new Set(ids);
+  for (const id of gone) {
+    rows.get(id)?.remove();
+    rows.delete(id);
+    latest.delete(id);
+  }
+  for (const q of [held, incoming]) {
+    for (let i = q.length - 1; i >= 0; i--) if (gone.has(q[i].steamId64)) q.splice(i, 1);
+  }
+  layout();
+  if (paused) renderPill();
+}
 
 function enqueue(entries) {
   for (const e of entries) (paused ? held : incoming).push(e);
@@ -2465,6 +2642,7 @@ function resume() {
     pump();
   };
   if (list.scrollTop > 0 && !reduce) {
+    ignoreScrollUntil = Date.now() + 800; // our own smooth scroll is not user intent
     list.scrollTo({ top: 0, behavior: 'smooth' });
     setTimeout(flush, 350);
   } else {
@@ -2483,12 +2661,16 @@ function renderPill() {
   list.addEventListener(ev, () => { lastIntent = Date.now(); }, { passive: true });
 });
 list.addEventListener('scroll', () => {
-  if (Date.now() - lastIntent > 900) return; // our own smooth scroll, not the user
+  const now = Date.now();
+  if (now < ignoreScrollUntil || now - lastIntent > 900) return; // not the user
   if (atTop() && !hover) resume();
-  else pause(hover ? 0 : IDLE_MS);
+  else pause(hover ? HOVER_MAX_MS : IDLE_MS);
 }, { passive: true });
-list.addEventListener('mouseenter', () => { hover = true; pause(0); });
-list.addEventListener('mouseleave', () => { hover = false; pause(atTop() ? LEAVE_MS : IDLE_MS); });
+list.addEventListener('mouseenter', () => { hover = true; pause(HOVER_MAX_MS); });
+list.addEventListener('mouseleave', () => {
+  hover = false;
+  if (paused) pause(atTop() ? LEAVE_MS : IDLE_MS);
+});
 list.addEventListener('touchend', () => pause(atTop() ? LEAVE_MS : IDLE_MS), { passive: true });
 pill.addEventListener('click', () => { hover = false; resume(); });
 
@@ -2518,14 +2700,13 @@ window.addEventListener('focus', () => { document.title = baseTitle; });
 
 // ---- data ----
 
-function shownMap() {
-  return new Map([...rows].map(([id, r]) => [id, r._e.lastTs]));
-}
-
 function onData(data, isSnapshot) {
   hourCount = data.hourCount;
   renderCount();
-  const fresh = diffEntries(data.entries || [], shownMap());
+  const entries = data.entries || [];
+  if (isSnapshot && loaded) removeIds(idsToRemove(latest, entries));
+  const fresh = diffEntries(entries, latest);
+  fresh.forEach(e => latest.set(e.steamId64, e));
   if (!loaded && isSnapshot) {
     fresh.forEach(e => insert(e, false));
     loaded = true;
@@ -2560,11 +2741,12 @@ function connect() {
   es = new EventSource('/api/stream');
   es.addEventListener('snapshot', ev => onData(JSON.parse(ev.data), true));
   es.addEventListener('entries', ev => onData(JSON.parse(ev.data), false));
+  // While the stream is down (reconnecting or refused) keep the list fresh by
+  // polling; the next successful open stops it.
+  es.onopen = () => stopPolling();
   es.onerror = () => {
-    if (es && es.readyState === EventSource.CLOSED) {
-      es = null;
-      startPolling();
-    }
+    if (!pollTimer) startPolling();
+    if (es && es.readyState === EventSource.CLOSED) es = null;
   };
 }
 
@@ -2616,7 +2798,7 @@ node --disable-warning=ExperimentalWarning "$TMPDIR/sc-dev/dev-feed.mjs"
 (Replace `/ABSOLUTE/PATH/TO/REPO` with the repo path.) Open `http://127.0.0.1:8787/` and verify:
 1. The feed section appears after the first snapshot; rows show avatar, nickname, `×N`, relative time, "Dotabuff →" pointing at `https://www.dotabuff.com/players/<id>`.
 2. New rows flap in one at a time; `<b>not bold</b>` renders as literal text.
-3. Hover pauses (gold dot, pill "Paused while hovering"); scrolling down pauses with a countdown bar; after 8 s idle it scrolls to the top and drips held rows; scrolling back to the top resumes immediately; clicking the pill resumes.
+3. Hover pauses (gold dot, pill "Paused while hovering", released after 30 s even if the cursor stays); scrolling down pauses with a countdown bar; after 8 s idle it scrolls to the top and drips held rows; scrolling back to the top resumes immediately; clicking the pill resumes.
 4. Typing `akamai kvyze` filters and highlights; `?q=` updates; reload keeps the query; with the tab in the background a matching new row adds "★" to the title, cleared on focus.
 5. Headers "Just now / Last 5 min / Last hour" stay sticky while scrolling.
 6. DevTools → Rendering → emulate `prefers-reduced-motion: reduce`: rows appear without flapping.

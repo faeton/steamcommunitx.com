@@ -149,7 +149,8 @@ Validated with the interactive mockup (split-flap option B plus catch/release).
 - While the tab is hidden, SSE is closed and polling stops. On return, the client refetches and merges.
 
 **Drip and upsert:**
-- New entries are queued and revealed one at a time, spaced across the expected batch gap (min 400 ms, max 3 s). A backlog beyond 3 items is inserted without animation.
+- New entries are queued and revealed one at a time, spaced across the expected batch gap (min 400 ms, max 3 s); only a live queue longer than 60 is partly inserted without animation. When the feed is released after a pause, the held backlog except the newest 3 is inserted without animation and those 3 flap in.
+- The client keeps one newest copy per player across shown and queued rows, so a stale queued copy never overwrites newer data. Snapshots are authoritative: rows missing from one (opted out, turned private) are removed. The server re-sends a snapshot when that happens, never a list of removed ids.
 - A player already in the list moves to the top, re-flaps, and updates `×N`.
 
 **Split-flap animation:**
