@@ -1,5 +1,5 @@
 import { analyticsSnippet, resolveBanners, indexPage, errorPage, redirectPage, escapeHtml } from './pages.js';
-import { pickLang, parseCheckList } from './client/feed-shared.js';
+import { pickLang, parseCheckList, vanityName } from './client/feed-shared.js';
 
 // Helper functions for API key management
 export function getConfiguredApiKeys(env) {
@@ -276,9 +276,35 @@ export function parseRoute(pathname) {
   return { kind: linktype, value };
 }
 
+function jsonResponse(data, status = 200, headers = {}) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers }
+  });
+}
+
+// Watchlist "+ ID" box: a vanity name (or /id/<name> URL) → Dota id. One
+// Steam call per add, never on render; successful names are cached by getId.
+async function resolveVanity(request, env) {
+  const name = vanityName(new URL(request.url).searchParams.get('v'));
+  if (!name) return jsonResponse({ error: 'not a vanity name' }, 400);
+  if (!env.FEED.allowResolve(request.headers.get('cf-connecting-ip') || '')) {
+    return jsonResponse({ error: 'too many requests' }, 429, { 'Retry-After': '60' });
+  }
+  let steamId64;
+  try {
+    steamId64 = await getId(name, env);
+  } catch (e) {
+    return jsonResponse({ error: 'steam unavailable' }, 502);
+  }
+  const dotaId = steamId64 ? convertToDota2Id(steamId64) : null;
+  return dotaId ? jsonResponse({ dotaId: String(dotaId) }) : jsonResponse({ error: 'no match' }, 404);
+}
+
 export async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
   const { pathname, hostname } = url;
+  if (env.FEED && pathname === '/api/resolve.json') return resolveVanity(request, env);
   if (env.FEED && pathname.startsWith('/api/')) return env.FEED.handle(request);
   const route = parseRoute(pathname);
   if (route.kind === 'favicon') return handleFavicon();

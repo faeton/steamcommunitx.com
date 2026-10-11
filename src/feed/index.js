@@ -51,6 +51,7 @@ export function createFeed({
   const perIp = new RateLimiter(20, 60_000, clock);
   const perPlayer = new RateLimiter(6, 60_000, clock);
   const perWatcher = new RateLimiter(WATCH_PER_MIN, 60_000, clock);
+  const perResolver = new RateLimiter(10, 60_000, clock); // vanity lookups from the watchlist box
   const hub = new SseHub({ maxClients });
   let blocked = loadWords(blockedWordsFile, log);
   let lastTickAt = null;
@@ -182,6 +183,10 @@ export function createFeed({
     tick,
 
     watch,
+
+    allowResolve(ipKey) {
+      return perResolver.allow(ipKey || '-');
+    },
 
     // Same payload as /api/recent.json; the home page pre-renders from it.
     snapshot,

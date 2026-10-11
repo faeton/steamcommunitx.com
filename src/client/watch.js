@@ -4,7 +4,7 @@
 // only nudges an earlier refresh (it carries enriched players ~30 s later).
 // Names go through text nodes only, never innerHTML.
 import {
-  t, pickLang, avatarUrl, parseCheckList, accountToSteamId64, watchMeta, watchNews, MAX_WATCH,
+  t, pickLang, avatarUrl, parseCheckList, vanityName, accountToSteamId64, watchMeta, watchNews, MAX_WATCH,
   PLAYER_SITES, STEAM_PROFILE, LOCK_PATH
 } from './feed-shared.js';
 import { addCount, away } from './title.js';
@@ -216,6 +216,14 @@ function schedule(ms) {
   if (list.length) pollTimer = setTimeout(refresh, ms);
 }
 
+async function resolve(name) {
+  try {
+    const res = await fetch('/api/resolve.json?v=' + encodeURIComponent(name), { cache: 'no-store' });
+    if (!res.ok) return null;
+    return parseCheckList(String((await res.json()).dotaId))[0] || null;
+  } catch { return null; }
+}
+
 // ---- signals ----
 
 function chime() {
@@ -258,14 +266,31 @@ function setBell(on) {
 // ---- controls ----
 
 function wire() {
-  $('watch-add').addEventListener('submit', ev => {
+  $('watch-add').addEventListener('submit', async ev => {
     ev.preventDefault();
     const input = $('watch-in');
-    const added = parseCheckList(input.value);
-    const next = parseCheckList([...list, ...added]);
-    if (!added.length) { input.setAttribute('aria-invalid', 'true'); return; }
+    if (input.disabled) return;
+    const tokens = input.value.split(/[\s,;]+/).filter(Boolean);
+    const added = [];
+    // Ids and id URLs parse locally; /id/<name> links and bare names ask the
+    // server (one Steam lookup each), in input order.
+    input.disabled = true;
+    for (const token of tokens) {
+      if (parseCheckList([...list, ...added]).length >= MAX_WATCH) break;
+      const ids = parseCheckList(token);
+      if (ids.length) { added.push(...ids); continue; }
+      const name = vanityName(token);
+      if (name) {
+        const id = await resolve(name);
+        if (id) added.push(id);
+      }
+    }
+    input.disabled = false;
+    if (!added.length) { input.setAttribute('aria-invalid', 'true'); input.focus(); return; }
     input.removeAttribute('aria-invalid');
     input.value = '';
+    input.focus();
+    const next = parseCheckList([...list, ...added]);
     if (next.join(',') !== list.join(',')) { setList(next); refresh(); }
   });
   $('watch-in').addEventListener('input', ev => ev.target.removeAttribute('aria-invalid'));

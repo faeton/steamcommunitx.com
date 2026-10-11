@@ -249,3 +249,12 @@ test('/api/check.json: parses ids, no-store, per-IP limit shared with watch()', 
   assert.equal(feed.watch(['1'], '9.9.9.9'), null);
   assert.equal((await feed.handle(req('22202', '8.8.8.8'))).status, 200);
 });
+
+test('allowResolve: 10 vanity lookups per minute per IP', () => {
+  const { feed, clock } = makeFeed();
+  for (let i = 0; i < 10; i++) assert.equal(feed.allowResolve('ip'), true);
+  assert.equal(feed.allowResolve('ip'), false);
+  assert.equal(feed.allowResolve('other'), true);
+  clock.now += 60_000;
+  assert.equal(feed.allowResolve('ip'), true);
+});

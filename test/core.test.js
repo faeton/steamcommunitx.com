@@ -439,3 +439,32 @@ test('home ?check: a throwing or over-budget watch still renders ids and the fee
   const none = { ...fakeFeed(), watch() { throw new Error('must not be called'); } };
   assert.match(await (await handleRequest(new Request('https://example.com/'), { FEED: none }, ctx)).text(), /"list":\[\]/);
 });
+
+test('/api/resolve.json: vanity name → Dota id, 404 on no match, 400 on junk, 429 over budget', async () => {
+  const realFetch = globalThis.fetch;
+  const asked = [];
+  globalThis.fetch = async url => {
+    const name = new URL(url).searchParams.get('vanityurl');
+    asked.push(name);
+    return Response.json({ response: name === 'faeton' ? { success: 1, steamid: '76561198123456789' } : { success: 42, message: 'No match' } });
+  };
+  let budget = 3;
+  const feed = { ...fakeFeed(), allowResolve: ip => { assert.equal(ip, '1.2.3.4'); return budget-- > 0; } };
+  const env = { STEAM_API_KEY: 'k', FEED: feed };
+  const req = q => new Request(`https://example.com/api/resolve.json?v=${encodeURIComponent(q)}`, { headers: { 'cf-connecting-ip': '1.2.3.4' } });
+  try {
+    const ok = await handleRequest(req('https://steamcommunitx.com/id/faeton/'), env, ctx);
+    assert.equal(ok.status, 200);
+    assert.equal(ok.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await ok.json(), { dotaId: '163191061' });
+    assert.equal((await handleRequest(req('nobody_here'), env, ctx)).status, 404);
+    const junk = await handleRequest(req('<script>'), env, ctx);
+    assert.equal(junk.status, 400);
+    assert.equal((await handleRequest(req('faeton'), env, ctx)).status, 200);
+    assert.equal((await handleRequest(req('faeton'), env, ctx)).status, 429);
+    assert.deepEqual(asked, ['faeton', 'nobody_here', 'faeton']); // junk never reaches Steam
+    assert.equal((await handleRequest(req('faeton'), { STEAM_API_KEY: 'k' }, ctx)).status, 404); // no feed, no endpoint
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

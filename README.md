@@ -134,14 +134,14 @@ Privacy and moderation:
 
 ### Watching a team (`?check=`)
 
-Before a Battle Cup a team can share one link, for example `/?check=123456789,163191061`, with up to 10 players. Every ID may be a Dota ID, a SteamID64, `[U:1:x]` or a pasted Steam/Dotabuff/OpenDota/STRATZ profile URL. The *Watching* block above the list shows, for each player, when a check was last recorded here in the last 24 hours and how many, and it updates live:
+Before a Battle Cup a team can share one link, for example `/?check=123456789,163191061`, with up to 10 players. Every ID may be a Dota ID, a SteamID64, `[U:1:x]` or a pasted Steam/Dotabuff/OpenDota/STRATZ profile URL; the *+ ID* box also takes vanity links (`/id/name`, ours or Steam's) and bare vanity names, resolved once when added. The *Watching* block above the list shows, for each player, when a check was last recorded here in the last 24 hours and how many, and it updates live:
 - the page polls the status every 20 seconds while the list is non-empty, also in a background tab (browsers slow that to about once a minute);
 - a new check flashes the row, highlights the player on the board, and puts a counter in the tab title while you are away; the 🔔 button adds a chime and a browser notification;
 - the IDs can be edited in place; the address bar always holds the current link, and the last list is remembered in the browser for a bare visit.
 
 "No checks recorded" covers this redirector only, and your own lookups count as checks too. A link with `?check` is marked `noindex`, and the page sends `Referrer-Policy: strict-origin-when-cross-origin` so the IDs do not leak to the sites it links to.
 
-Endpoints: `GET /api/recent.json` (snapshot, cacheable for 10 s), `GET /api/stream` (Server-Sent Events), `GET /api/check.json?ids=…` (watchlist status, up to 10 IDs, 60 lookups per minute per IP), `GET /healthz`.
+Endpoints: `GET /api/recent.json` (snapshot, cacheable for 10 s), `GET /api/stream` (Server-Sent Events), `GET /api/check.json?ids=…` (watchlist status, up to 10 IDs, 60 lookups per minute per IP), `GET /api/resolve.json?v=<vanity>` (vanity name → Dota ID for the watchlist box, 10 per minute per IP), `GET /healthz`.
 
 ## Contributing
 Feel free to submit pull requests for improvements, bug fixes, or additional features.

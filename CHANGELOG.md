@@ -3,6 +3,16 @@
 All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.5.1] - 2026-10-11
+
+### Added
+- Watchlist box accepts vanity links (`/id/name` on this site or Steam) and
+  bare vanity names, resolved via `GET /api/resolve.json` (one Steam lookup
+  per add, 10 per minute per IP).
+
+### Fixed
+- Profile URLs with a SteamID3 (`/profiles/[U:1:x]`) are accepted.
+
 ## [2.5.0] - 2026-10-11
 
 ### Added

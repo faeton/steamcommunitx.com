@@ -77,3 +77,21 @@ test('titleText: watch counter first, then the feed star, then the page title', 
 test('watchNews: a higher count with the same lastTs is news too', () => {
   assert.deepEqual(watchNews(new Map([['1', { count: 1, lastTs: 100 }]]), [{ dotaId: '1', count: 2, lastTs: 100 }]), ['1']);
 });
+
+test('parseCheckList: SteamID3 inside a profile URL', () => {
+  assert.deepEqual(parseCheckList('https://steamcommunity.com/profiles/[U:1:42]/'), ['42']);
+  assert.deepEqual(parseCheckList(encodeURIComponent('https://steamcommunitx.com/profiles/[U:1:43]')), ['43']);
+});
+
+test('vanityName: /id/ URLs (ours or Steam\'s) and bare names; never ids or junk', async () => {
+  const { vanityName } = await import('../src/client/feed-shared.js');
+  assert.equal(vanityName('https://steamcommunitx.com/id/faeton/'), 'faeton');
+  assert.equal(vanityName('https://steamcommunity.com/id/Some_Name-1'), 'Some_Name-1');
+  assert.equal(vanityName('steamcommunity.com/id/faeton?l=en'), 'faeton');
+  assert.equal(vanityName('faeton'), 'faeton');
+  assert.equal(vanityName('123456'), null);
+  assert.equal(vanityName('https://www.dotabuff.com/players/42'), null);
+  assert.equal(vanityName('<script>'), null);
+  assert.equal(vanityName('a'), null);
+  assert.equal(vanityName('x'.repeat(33)), null);
+});

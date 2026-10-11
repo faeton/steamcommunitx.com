@@ -313,10 +313,10 @@ const ACCOUNT_LIMIT = 2n ** 32n;
 function tokenAccount(token) {
   let s = token;
   try { s = decodeURIComponent(s); } catch { /* malformed escape: use as is */ }
+  const path = /\/(?:profiles|players)\/([^/?#]+)(?:[/?#]|$)/.exec(s);
+  if (path) s = path[1];
   const steam3 = /^\[?U:1:(\d{1,10})\]?$/i.exec(s);
   if (steam3) s = steam3[1];
-  const path = /\/(?:profiles|players)\/(\d+)(?:[/?#]|$)/.exec(s);
-  if (path) s = path[1];
   let n;
   if (/^\d{17}$/.test(s)) n = BigInt(s) - STEAM64_BASE;
   else if (/^\d{1,10}$/.test(s)) n = BigInt(s);
@@ -338,6 +338,18 @@ export function parseCheckList(raw) {
     if (out.length === MAX_WATCH) break;
   }
   return out;
+}
+
+// A Steam vanity name from a /id/<name> URL (Steam's or ours) or a bare name
+// typed into the watchlist box; null for ids and anything else.
+const VANITY_RE = /^[A-Za-z0-9_-]{2,32}$/;
+export function vanityName(token) {
+  let s = String(token ?? '').trim();
+  try { s = decodeURIComponent(s); } catch { /* malformed escape: use as is */ }
+  const path = /\/id\/([^/?#]+)(?:[/?#]|$)/.exec(s);
+  if (path) s = path[1];
+  else if (s.includes('/')) return null;
+  return VANITY_RE.test(s) && !/^\d+$/.test(s) ? s : null;
 }
 
 export function accountToSteamId64(account) {
