@@ -162,7 +162,7 @@ const FEED_CSS = `
     .fd-live i { width: 8px; height: 8px; border-radius: 50%; background: #e5484d; }
     .fd-box.paused .fd-live i { background: var(--gold); }
     .fd-count { font-variant-numeric: tabular-nums; }
-    .fd-list { height: 392px; overflow-y: auto; overscroll-behavior: contain; background: var(--bg); scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+    .fd-list { height: 392px; overflow-y: auto; overscroll-behavior: contain; overflow-anchor: none; background: var(--bg); scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
     .fd-blk { position: sticky; top: 0; z-index: 1; padding: 6px 16px; font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); background: var(--bg-2); }
     .fd-list.fd-multi { display: grid; grid-template-columns: repeat(var(--cols, 1), minmax(0, 1fr)); align-items: start; }
     .fd-col { min-width: 0; }

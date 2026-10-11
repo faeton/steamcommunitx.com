@@ -7,7 +7,7 @@
 import {
   t, pickLang, avatarUrl, splitTerms, matchesEntry, highlightRanges,
   timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, isStale, insertIndex, HOUR_MS,
-  tempoPerMin, nextColumns, maxColumnsFor, pickColumn, shownColumns, TEMPO_WINDOW_MS, metaLine,
+  tempoPerMin, nextColumns, maxColumnsFor, pickColumn, shownColumns, foldQueue, TEMPO_WINDOW_MS, metaLine,
   PLAYER_SITES, STEAM_PROFILE, LOCK_PATH
 } from './feed-shared.js';
 
@@ -245,7 +245,11 @@ function flap(r) {
     if (tick >= lastTick) {
       clearInterval(r._flap);
       r._flap = null;
-      setTimeout(() => { if (r.isConnected && !r._flap) paint(r); }, 450);
+      setTimeout(() => {
+        if (!r.isConnected || r._flap) return;
+        paint(r);
+        layout();
+      }, 450);
     }
   }, FLAP_TICK_MS);
   r.firstChild.classList.add('fd-flip');
@@ -372,7 +376,7 @@ function setColumns(n) {
 function retune() {
   if (!loaded) return;
   const now = Date.now();
-  while (arrivals.length && now - arrivals[0] > TEMPO_WINDOW_MS) arrivals.shift();
+  for (let i = arrivals.length - 1; i >= 0; i--) if (now - arrivals[i] > TEMPO_WINDOW_MS) arrivals.splice(i, 1);
   if (!paused && now - lastRetune >= RETUNE_MIN_MS) {
     const want = nextColumns(tempoCols, tempoPerMin(arrivals, now), maxColumnsFor(list.clientWidth));
     if (want !== tempoCols) {
@@ -402,12 +406,19 @@ else window.addEventListener('resize', onResize);
 
 // ---- drip ----
 
+// Keep a queue to one newest entry per player and a bounded length.
+function fold(queue) {
+  queue.splice(0, queue.length, ...foldQueue(queue, MAX_ROWS));
+}
+
 function enqueue(entries) {
-  const now = Date.now();
   for (const e of entries) {
-    arrivals.push(now);
+    // The check's own time, not "now": a catch-up snapshot after the tab was
+    // hidden is not a burst of live traffic.
+    arrivals.push(e.lastTs);
     (paused ? held : incoming).push(e);
   }
+  fold(paused ? held : incoming);
   retune();
   if (paused) renderPill();
   else pump();
@@ -438,6 +449,7 @@ function pause(ms) {
   box.classList.add('paused');
   liveEl.textContent = t(lang, 'paused');
   clearTimeout(releaseTimer);
+  if (flushTimer) list.scrollTop = list.scrollTop; // re-caught mid-release: stop the smooth scroll here
   clearTimeout(flushTimer);
   releaseTimer = null;
   flushTimer = null;
@@ -446,7 +458,10 @@ function pause(ms) {
   // nothing is inserted at the top while the reader holds the list.
   clearTimeout(dripTimer);
   dripTimer = null;
-  if (incoming.length) held.unshift(...incoming.splice(0));
+  if (incoming.length) {
+    held.unshift(...incoming.splice(0));
+    fold(held);
+  }
   try { (bar.getAnimations ? bar.getAnimations() : []).forEach(a => a.cancel()); } catch { /* old browser */ }
   if (ms) {
     releaseTimer = setTimeout(release, ms);
@@ -463,7 +478,9 @@ function release() {
     // Our own smooth scroll is not user intent; go live once it reaches the top.
     ignoreScrollUntil = Date.now() + RELEASE_FAILSAFE_MS;
     try { list.scrollTo({ top: 0, behavior: 'smooth' }); } catch { list.scrollTop = 0; }
-    flushTimer = setTimeout(goLive, RELEASE_FAILSAFE_MS);
+    // Failsafe: if the smooth scroll never reports the top, jump there, so rows
+    // are never inserted while the reader is still scrolled down.
+    flushTimer = setTimeout(() => { list.scrollTop = 0; goLive(); }, RELEASE_FAILSAFE_MS);
   } else {
     list.scrollTop = 0;
     goLive();
@@ -477,6 +494,7 @@ function goLive() {
   paused = false;
   box.classList.remove('paused');
   liveEl.textContent = t(lang, 'live');
+  list.scrollTop = 0; // live means the top; rows are inserted above nothing
   const backlog = held.splice(0);
   const loud = Math.max(0, backlog.length - BURST);
   backlog.slice(0, loud).forEach(e => insert(e, false));
@@ -484,6 +502,7 @@ function goLive() {
   trim();
   layout();
   pump();
+  retune();
 }
 
 function renderPill() {
@@ -492,7 +511,12 @@ function renderPill() {
     : t(lang, hover ? 'pillHover' : 'pill');
 }
 
-function onIntent() {
+function onLink(ev) {
+  return Boolean(ev.target && ev.target.closest && ev.target.closest('a'));
+}
+
+function onIntent(ev) {
+  if (onLink(ev)) return; // tapping the nickname or a D/O/S tile is not a catch
   lastIntent = Date.now();
   if (flushTimer) pause(hover ? HOVER_MAX_MS : IDLE_MS); // the reader grabbed it mid-release
 }
@@ -515,7 +539,8 @@ list.addEventListener('scroll', () => {
     else release();
   }
 }, { passive: true });
-list.addEventListener('touchend', () => {
+list.addEventListener('touchend', ev => {
+  if (onLink(ev)) return;
   if (paused && atTop()) pause(LEAVE_MS);
   else if (!atTop()) pause(IDLE_MS);
 }, { passive: true });
@@ -534,7 +559,8 @@ pill.addEventListener('click', () => { hover = false; release(); });
 
 function setQuery(q) {
   terms = splitTerms(q);
-  rows.forEach(r => { if (!r._flap) paint(r); });
+  // Flapping rows repaint when their flap ends; their visibility changes now.
+  rows.forEach(r => { if (!r._flap) paint(r); else r.hidden = !matchesEntry(r._e, terms); });
   layoutKey = '';
   layout();
   applyColumns();
@@ -572,6 +598,8 @@ function onData(data, isSnapshot) {
     fresh.forEach(e => insert(e, false));
     loaded = true;
     section.hidden = false;
+    // Measure fades once the section is laid out.
+    requestAnimationFrame(() => rows.forEach(r => { if (!r.hidden && !r._flap) fitName(r); }));
     trim();
     layout();
     return;

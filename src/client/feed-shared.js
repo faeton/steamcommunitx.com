@@ -216,10 +216,12 @@ export function tempoPerMin(times, now, windowMs = TEMPO_WINDOW_MS) {
   return n * 60_000 / windowMs;
 }
 
+// One step per call (1 -> 2 -> 3), so a burst never jumps straight to three
+// reels; the width cap applies at once.
 export function nextColumns(current, perMin, maxCols) {
   let n = current;
-  while (n < 3 && perMin >= UP[n]) n++;
-  while (n > 1 && perMin < DOWN[n]) n--;
+  if (n < 3 && perMin >= UP[n]) n++;
+  else if (n > 1 && perMin < DOWN[n]) n--;
   return Math.max(1, Math.min(n, maxCols));
 }
 
@@ -239,4 +241,15 @@ export function pickColumn(lastChanged) {
 // while a filter is active (it is applied at once, even while paused).
 export function shownColumns(tempoCols, filtering, width) {
   return filtering ? 1 : Math.min(tempoCols, maxColumnsFor(width));
+}
+
+// Queued rows (held while paused, or waiting to drip): one newest entry per
+// player, oldest first, and at most `cap` of them (the newest win).
+export function foldQueue(queue, cap) {
+  const newest = new Map();
+  for (const e of queue) {
+    const prev = newest.get(e.steamId64);
+    if (isNewer(e, prev)) newest.set(e.steamId64, e);
+  }
+  return [...newest.values()].sort((a, b) => a.lastTs - b.lastTs).slice(-cap);
 }

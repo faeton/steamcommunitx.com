@@ -17,6 +17,12 @@ All notable changes to this project are documented here. The format is based on
   filter no longer resets the reel-change cooldown; name fades follow resizes.
 - Feed assets: `If-None-Match` accepts weak and listed ETags; `nosniff`.
 - Error page titles are escaped; `/ID/…`, `/id//name` and `///` route sensibly.
+- Catch/release: releasing always ends at the top and live (scroll anchoring
+  is off for the list, the failsafe jumps to the top, re-catching stops the
+  smooth scroll); taps on the nickname or a site tile are not catch gestures.
+- Reels step one at a time and a catch-up snapshot after a hidden tab no
+  longer counts as a live burst; queued rows are folded per player and capped;
+  a filter hides flapping rows at once.
 
 ## [2.3.2] - 2026-10-11
 
