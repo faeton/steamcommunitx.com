@@ -128,7 +128,7 @@ export function renderFeedSection(snapshot, lang = 'en', now = Date.now()) {
         <h2 data-i18n="feedTitle">${escapeHtml(t(lang, 'feedTitle'))}</h2>
       </div>
       <div class="fd-search">
-        <input id="feed-q" type="search" autocomplete="off" spellcheck="false" aria-label="Filter by nickname" placeholder="${escapeHtml(t(lang, 'searchPlaceholder'))}">
+        <input id="feed-q" type="search" autocomplete="off" spellcheck="false" aria-label="Filter by nickname or Dota ID" placeholder="${escapeHtml(t(lang, 'searchPlaceholder'))}">
         <span class="fd-hits" id="feed-hits" aria-live="polite"></span>
       </div>
       <div class="fd-box" id="feed">

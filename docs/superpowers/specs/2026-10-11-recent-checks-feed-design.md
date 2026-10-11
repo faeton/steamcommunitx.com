@@ -169,7 +169,7 @@ Validated with the interactive mockup (split-flap option B plus catch/release).
 - On resume it smooth-scrolls to the top and drips the queue.
 
 **Filter / pinned nickname:**
-- Words are split on whitespace, normalised with NFKC + lowercase, and match if **any** word is a substring of the nickname. Matches are highlighted via DOM `<mark>` nodes, never `innerHTML`.
+- Words are split on whitespace, normalised with NFKC + lowercase, and match if **any** word is a substring of the nickname. A word containing 4+ digits also matches when those digits are part of the Dota ID or SteamID64 (so a pasted profile URL or `[U:1:x]` works). Matches are highlighted via DOM `<mark>` nodes, never `innerHTML`.
 - The query is kept in `?q=` and `localStorage`. When a matching entry arrives, the row flashes gold and the tab title gets a "★" prefix until the tab is focused.
 
 **Copy & language:**

@@ -23,7 +23,7 @@ const DICT = {
     live: 'Live',
     paused: 'Paused',
     hourCount: '{n} checked this hour',
-    searchPlaceholder: 'Your nickname or a few words: akamai kvyze',
+    searchPlaceholder: 'Nickname, Dota ID or a few words: akamai 123456789',
     hits: '{n} matches',
     justNow: 'Just now',
     last5: 'Last 5 min',
@@ -46,7 +46,7 @@ const DICT = {
     live: 'Live',
     paused: 'Пауза',
     hourCount: '{n} за час',
-    searchPlaceholder: 'Свой ник или пару слов: akamai kvyze',
+    searchPlaceholder: 'Ник, Dota ID или пару слов: akamai 123456789',
     hits: 'совпадений: {n}',
     justNow: 'Только что',
     last5: 'Последние 5 мин',
@@ -69,7 +69,7 @@ const DICT = {
     live: 'Live',
     paused: 'Пауза',
     hourCount: '{n} за годину',
-    searchPlaceholder: 'Свій нік або кілька слів: akamai kvyze',
+    searchPlaceholder: 'Нік, Dota ID або кілька слів: akamai 123456789',
     hits: 'збігів: {n}',
     justNow: 'Щойно',
     last5: 'Останні 5 хв',
@@ -118,6 +118,16 @@ export function matchesTerms(name, terms) {
   if (!terms.length) return true;
   const n = normalize(name);
   return terms.some(term => n.includes(term));
+}
+
+// A row matches when any word is in the nickname, or any run of 4+ digits in
+// a word is part of its Dota or Steam ID, so a pasted profile URL or
+// [U:1:x] finds the player too.
+export function matchesEntry(entry, terms) {
+  if (!terms.length) return true;
+  if (matchesTerms(entry.name, terms)) return true;
+  const ids = `${entry.dotaId || ''} ${entry.steamId64 || ''}`;
+  return terms.some(term => (term.match(/\d{4,}/g) || []).some(digits => ids.includes(digits)));
 }
 
 // Ranges index into the original string, so they are only reliable when

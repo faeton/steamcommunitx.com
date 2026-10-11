@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   avatarUrl, pickLang, t, ago, splitTerms, matchesTerms, highlightRanges,
   timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, isStale, insertIndex,
-  tempoPerMin, nextColumns, maxColumnsFor, pickColumn, metaLine
+  tempoPerMin, nextColumns, maxColumnsFor, pickColumn, metaLine, matchesEntry
 } from '../src/client/feed-shared.js';
 
 const HASH = 'fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb';
@@ -147,4 +147,17 @@ test('metaLine: Dota ID before the relative time', () => {
   const now = 1_000_000;
   assert.equal(metaLine('en', { dotaId: '123123123', lastTs: now - 5000 }, now), 'id 123123123 · 5s ago');
   assert.equal(metaLine('ru', { dotaId: '22202', lastTs: now - 240_000 }, now), 'id 22202 · 4 мин назад');
+});
+
+test('matchesEntry: nickname words or Dota / Steam IDs (4+ digits, any form)', () => {
+  const e = { name: 'kvyze', dotaId: '163191061', steamId64: '76561198123456789' };
+  assert.equal(matchesEntry(e, splitTerms('163191061')), true);
+  assert.equal(matchesEntry(e, splitTerms('9106')), true);
+  assert.equal(matchesEntry(e, splitTerms('[U:1:163191061]')), true);
+  assert.equal(matchesEntry(e, splitTerms('steamcommunity.com/profiles/76561198123456789')), true);
+  assert.equal(matchesEntry(e, splitTerms('akamai 163191061')), true);
+  assert.equal(matchesEntry(e, splitTerms('kvy')), true);
+  assert.equal(matchesEntry(e, splitTerms('999999')), false);
+  assert.equal(matchesEntry(e, splitTerms('7')), false); // too short to mean an id, not in the name
+  assert.equal(matchesEntry(e, []), true);
 });

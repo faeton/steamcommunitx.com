@@ -5,7 +5,7 @@
 // browser APIs (Element.animate, getAnimations) are feature-checked because
 // the Dota in-game browser runs an older Chromium.
 import {
-  t, pickLang, avatarUrl, splitTerms, matchesTerms, highlightRanges,
+  t, pickLang, avatarUrl, splitTerms, matchesEntry, highlightRanges,
   timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, isStale, insertIndex, HOUR_MS,
   tempoPerMin, nextColumns, maxColumnsFor, pickColumn, TEMPO_WINDOW_MS, metaLine,
   DOTABUFF_PLAYER, LOCK_PATH
@@ -117,7 +117,7 @@ function paint(r) {
   nodes.push(e.name.slice(pos));
   setNick(r, nodes);
   r._meta.textContent = metaLine(lang, e, Date.now());
-  r.hidden = !matchesTerms(e.name, terms);
+  r.hidden = !matchesEntry(e, terms);
   if (r.isConnected && !r.hidden) fitName(r);
 }
 
