@@ -200,3 +200,11 @@ test('SseHub: an evicted lagging client loses its buffered frames (stream errors
   assert.equal(hub.size, 0);
   await assert.rejects(res.body.getReader().read(), /lagging/);
 });
+
+test('recordHit: accepts the whole 32-bit account range, rejects ids outside it', () => {
+  const { feed } = makeFeed();
+  assert.equal(feed.recordHit({ steamId64: '76561200000000000', ipHash: 'a' }), true);
+  assert.equal(feed.recordHit({ steamId64: '76561202255233023', ipHash: 'b' }), true); // account id 2^32 - 1
+  assert.equal(feed.recordHit({ steamId64: '76561202255233024', ipHash: 'c' }), false);
+  assert.equal(feed.recordHit({ steamId64: '76561197960265727', ipHash: 'd' }), false);
+});

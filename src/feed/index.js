@@ -6,7 +6,15 @@ import { RateLimiter } from './ratelimit.js';
 import { createSteamSummaries, Enricher } from './enrich.js';
 import { SseHub } from './sse.js';
 
-const STEAM64_RE = /^7656119\d{10}$/;
+const STEAM64_BASE = 76561197960265728n;
+
+// Individual-account SteamID64: base + a 32-bit account id.
+function isSteamId64(value) {
+  const s = String(value);
+  if (!/^\d{17}$/.test(s)) return false;
+  const account = BigInt(s) - STEAM64_BASE;
+  return account >= 0n && account < 2n ** 32n;
+}
 const RECENT_LIMIT = 200;
 const MAX_PENDING = 5000; // beyond this, hits are dropped until Steam catches up
 const FIRST_TICK_MS = 30_000;
@@ -87,7 +95,7 @@ export function createFeed({
 
   return {
     recordHit({ steamId64, ipHash }) {
-      if (stopped || !STEAM64_RE.test(String(steamId64))) return false;
+      if (stopped || !isSteamId64(steamId64)) return false;
       if (store.pendingCount() >= MAX_PENDING) return false;
       if (!perIp.allow(ipHash || '-') || !perPlayer.allow(steamId64)) return false;
       store.addCheck(steamId64, clock());
