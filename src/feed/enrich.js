@@ -18,6 +18,7 @@ export function createSteamSummaries({ env, fetchImpl = fetch, timeoutMs = 5000 
       const url = `${SUMMARIES_URL}?key=${encodeURIComponent(key)}&steamids=${ids.join(',')}`;
       try {
         const res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
+        if (!res.ok) res.body?.cancel().catch(() => {}); // free the connection
         if (res.status === 401 || res.status === 403) {
           await markProblemKey(env, key);
           lastError = new Error(`Steam rejected API key (${res.status})`);

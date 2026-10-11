@@ -306,3 +306,13 @@ test('home page renders the feed section only with a feed', async () => {
   const without = await (await handleRequest(new Request('https://example.com/'), {}, ctx)).text();
   assert.doesNotMatch(without, /feed-section/);
 });
+
+import { markRateLimitedKey } from '../src/core.js';
+
+test('markRateLimitedKey: a non-numeric Retry-After falls back to 300 s instead of NaN', async () => {
+  const puts = [];
+  const kv = { async put(key, value, opts) { puts.push([key, opts.expirationTtl]); } };
+  await markRateLimitedKey({ API_KEY_STATUS: kv }, 'k', NaN);
+  await markRateLimitedKey({ API_KEY_STATUS: kv }, 'k', 60);
+  assert.deepEqual(puts, [['key:k:ratelimited', 330], ['key:k:ratelimited', 90]]);
+});

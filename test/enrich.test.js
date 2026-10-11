@@ -134,3 +134,15 @@ test('Enricher.tick: empty queue is a no-op', async () => {
   const enricher = new Enricher({ store, fetchSummaries: async () => { throw new Error('unused'); }, onEntries() { throw new Error('unused'); }, blockedWords: () => [], log: quiet });
   assert.deepEqual(await enricher.tick(), { processed: 0 });
 });
+
+test('createSteamSummaries: rejected responses have their bodies released', async () => {
+  let cancelled = 0;
+  const body = () => new ReadableStream({ cancel() { cancelled++; } });
+  const fetchImpl = async url => url.includes('key=a')
+    ? new Response(body(), { status: 429, headers: { 'retry-after': 'Wed, 21 Oct 2026 07:28:00 GMT' } })
+    : url.includes('key=b') ? new Response(body(), { status: 503 })
+      : Response.json({ response: { players: [] } });
+  const fetchSummaries = createSteamSummaries({ env: { STEAM_API_KEY: 'a', STEAM_API_KEYS: 'b,c' }, fetchImpl });
+  await fetchSummaries([id(1)]);
+  assert.equal(cancelled, 2);
+});

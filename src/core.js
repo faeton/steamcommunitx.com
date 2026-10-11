@@ -41,7 +41,9 @@ export async function markProblemKey(env, key) {
 export async function markRateLimitedKey(env, key, retryAfter) {
   if (!env.API_KEY_STATUS) return;
   try {
-    const expirationSecs = Math.min(retryAfter + 30, 3600);
+    // Retry-After may be an HTTP date; anything non-numeric means the default.
+    const seconds = Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter : 300;
+    const expirationSecs = Math.min(seconds + 30, 3600);
     await env.API_KEY_STATUS.put(`key:${key}:ratelimited`, 'true', { expirationTtl: expirationSecs });
     console.log(`Marked key ${maskApiKey(key)} as rate-limited for ${expirationSecs} seconds`);
   } catch (e) {
