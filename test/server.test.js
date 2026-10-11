@@ -73,7 +73,7 @@ test('server with Steam down: /profiles redirects still work, hit stays queued',
 });
 
 test('server with FEED_ENABLED=0: behaves like the Worker', async () => {
-  const app = await boot({ FEED_ENABLED: '0' });
+  const app = await boot({ FEED_ENABLED: '0', STEAM_API_KEY: 'k' });
   try {
     assert.equal(app.feed, null);
     assert.doesNotMatch(await (await fetch(`${app.base}/`)).text(), /feed-section/);
@@ -83,7 +83,9 @@ test('server with FEED_ENABLED=0: behaves like the Worker', async () => {
     assert.equal(redirect.headers.get('cache-control'), 'max-age=300');
     await redirect.text();
     const health = await (await fetch(`${app.base}/healthz`)).json();
-    assert.deepEqual(health, { ok: true, feed: null });
+    assert.equal(health.ok, true);
+    assert.equal(health.feed, null);
+    assert.equal(health.steam.healthy, true);
   } finally {
     await app.close();
   }
@@ -163,6 +165,7 @@ test('server: feed assets carry an ETag, revalidate, and answer 304 when unchang
   try {
     const first = await fetch(`${app.base}/assets/feed-shared.js`);
     assert.equal(first.headers.get('cache-control'), 'no-cache');
+    assert.equal(first.headers.get('x-content-type-options'), 'nosniff');
     const etag = first.headers.get('etag');
     assert.match(etag, /^"[0-9a-f]{16}"$/);
     await first.text();
@@ -175,6 +178,19 @@ test('server: feed assets carry an ETag, revalidate, and answer 304 when unchang
     const stale = await fetch(`${app.base}/assets/feed-shared.js`, { headers: { 'if-none-match': '"other"' } });
     assert.equal(stale.status, 200);
     await stale.text();
+  } finally {
+    await app.close();
+  }
+});
+
+test('server: /healthz is 503 when Steam is unusable (no keys), so uptime checks alert', async () => {
+  const app = await boot({});
+  try {
+    const res = await fetch(`${app.base}/healthz`);
+    assert.equal(res.status, 503);
+    const body = await res.json();
+    assert.equal(body.ok, false);
+    assert.match(body.steam.reason, /no Steam API keys/);
   } finally {
     await app.close();
   }

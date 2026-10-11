@@ -129,6 +129,12 @@ async function getId(vanityUrl, env) {
         throw new Error(`Steam API error: ${response.statusText} (${response.status})`);
       }
       const data = await response.json();
+      // 42 = "No match": a valid answer (unknown vanity name), not an API
+      // failure, so no retries or key rotation.
+      if (data?.response?.success === 42) {
+        console.log(`No Steam ID found for vanity URL: ${normalizedVanity}`);
+        return null;
+      }
       if (data?.response?.success !== 1) {
         console.log(`API returned unsuccessful response: ${JSON.stringify(data.response)}`);
         throw new Error(`Steam API returned unsuccessful response: ${data?.response?.message || 'Unknown error'}`);
@@ -164,7 +170,14 @@ async function getId(vanityUrl, env) {
       throw { status: 500, message: "Failed to fetch Steam ID after multiple attempts" };
     }
   };
-  return fetchWithRetry();
+  try {
+    const steamId = await fetchWithRetry();
+    env.STEAM_HEALTH?.ok('vanity');
+    return steamId;
+  } catch (error) {
+    env.STEAM_HEALTH?.fail('vanity', error);
+    throw error;
+  }
 }
 
 export function convertToDota2Id(steamId) {
@@ -239,11 +252,15 @@ export async function ipHash(ip, now = Date.now()) {
 export function parseRoute(pathname) {
   if (pathname === '/favicon.ico') return { kind: 'favicon' };
   if (pathname === '/') return { kind: 'home' };
-  const cleanPath = pathname.replace(/\/+$/, '');
   // Steam profile URLs often carry a subpath (/inventory, /games, /friends,
   // /screenshots, ...). Only the first segment after the linktype is the
   // vanity/ID — ignore anything after it so those URLs still resolve.
-  const [, linktype, rawId] = cleanPath.split('/');
+  // Empty segments (//) are skipped and the link type is case-insensitive.
+  const segments = pathname.split('/').filter(Boolean);
+  if (!segments.length) return { kind: 'home' };
+  const linktype = segments[0].toLowerCase() === 'id' || segments[0].toLowerCase() === 'profiles'
+    ? segments[0].toLowerCase() : segments[0];
+  const rawId = segments[1];
   // Only /id/… and /profiles/… are Steam profile paths; anything else is a 404
   // rather than a blind redirect to Dotabuff.
   if (linktype !== 'id' && linktype !== 'profiles') {

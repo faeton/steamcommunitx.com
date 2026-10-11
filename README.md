@@ -100,7 +100,7 @@ Requires Node 24+ or Docker.
    - DNS record **proxied** (orange cloud).
    - SSL/TLS mode **Full (strict)** for the hostname (a Configuration Rule can scope it to one hostname). *Flexible* causes a redirect loop.
    - A Cloudflare **Origin CA** certificate on the proxy, and only Cloudflare IP ranges allowed through.
-5. Point an uptime monitor at `/healthz`.
+5. Point an uptime monitor at `/healthz`. It answers `503` (with `steam.reason`) when no Steam API key is configured, or when every Steam call has failed for 15+ minutes (revoked key, outage), so the monitor also catches a broken key, not only a dead process.
 
 Without Docker: `npm start` (reads the same variables from the environment).
 

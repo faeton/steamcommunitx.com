@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderTeaser, escapeHtml, renderFeedSection } from '../src/pages.js';
+import { renderTeaser, escapeHtml, renderFeedSection, errorPage } from '../src/pages.js';
 
 const HASH = 'fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb';
 const NOW = 1_800_000_000_000;
@@ -61,4 +61,10 @@ test('renderFeedSection: server-rendered rows, escaped names, visible on first p
 test('renderFeedSection: empty hour shows the empty state, no data means hidden until the stream', () => {
   assert.match(renderFeedSection({ hourCount: 0, generatedAt: NOW, entries: [] }, 'ru', NOW), /За последний час никого не проверяли/);
   assert.match(renderFeedSection(null, 'en', NOW), /<section[^>]*hidden/);
+});
+
+test('errorPage: the title is text, never markup', () => {
+  const html = errorPage('example.com', 500, '<img src=x onerror=alert(1)>', 'msg');
+  assert.doesNotMatch(html, /<img src=x/);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
 });

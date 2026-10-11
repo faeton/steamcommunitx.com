@@ -420,7 +420,8 @@ ${feed ? '  <script type="module" src="/assets/feed.js"></script>\n' : ''}</body
 </html>`;
 }
 
-export function errorPage(hostname, statusCode, title, message, analytics = '') {
+export function errorPage(hostname, statusCode, rawTitle, message, analytics = '') {
+  const title = escapeHtml(rawTitle); // plain text; `message` is trusted markup
   const retrySecondsMatch = message.match(/(\d+) seconds/);
   const retrySeconds = retrySecondsMatch ? parseInt(retrySecondsMatch[1], 10) : 30;
   const autoRefresh = statusCode === 429

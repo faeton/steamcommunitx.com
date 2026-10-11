@@ -19,6 +19,21 @@ const RECENT_LIMIT = 200;
 const MAX_PENDING = 5000; // beyond this, hits are dropped until Steam catches up
 const FIRST_TICK_MS = 30_000;
 
+// Report each GetPlayerSummaries outcome to the Steam health monitor.
+function reporting(fetchSummaries, health) {
+  if (!health) return fetchSummaries;
+  return async ids => {
+    try {
+      const players = await fetchSummaries(ids);
+      health.ok('summaries');
+      return players;
+    } catch (error) {
+      health.fail('summaries', error);
+      throw error;
+    }
+  };
+}
+
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
     status,
@@ -28,7 +43,7 @@ function json(data, status = 200, headers = {}) {
 
 export function createFeed({
   db, env, fetchImpl = fetch, clock = Date.now, log = console,
-  blockedWordsFile, maxClients = 2000
+  blockedWordsFile, maxClients = 2000, health = null
 }) {
   const store = new FeedStore(db, clock);
   const perIp = new RateLimiter(20, 60_000, clock);
@@ -57,7 +72,7 @@ export function createFeed({
 
   const enricher = new Enricher({
     store,
-    fetchSummaries: createSteamSummaries({ env, fetchImpl }),
+    fetchSummaries: reporting(createSteamSummaries({ env, fetchImpl }), health),
     blockedWords: () => blocked,
     clock,
     log,

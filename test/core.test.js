@@ -362,3 +362,54 @@ test('handleRequest: /profiles without an ID explains the URL formats instead of
   assert.match(html, /example\.com\/profiles\/76561198123456789/);
   assert.match(html, /G-TEST1/);
 });
+
+test('vanity: Steam "No match" (success 42) is a 404, reported as a healthy Steam call', async () => {
+  const realFetch = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = async () => Response.json({ response: { success: 42, message: 'No match' } });
+  try {
+    const health = { ok: kind => seen.push(['ok', kind]), fail: kind => seen.push(['fail', kind]) };
+    const res = await handleRequest(new Request('https://example.com/id/nobody-has-this-name', { headers: BROWSER }),
+      { STEAM_API_KEY: 'k', STEAM_HEALTH: health }, ctx);
+    assert.equal(res.status, 404);
+    assert.match(await res.text(), /Profile Not Found/);
+    assert.deepEqual(seen, [['ok', 'vanity']]);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('vanity: a Steam failure is reported to STEAM_HEALTH', async () => {
+  const realFetch = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = async () => new Response('', { status: 403 });
+  try {
+    const health = { ok: kind => seen.push(['ok', kind]), fail: kind => seen.push(['fail', kind]) };
+    const res = await handleRequest(new Request('https://example.com/id/someone', { headers: BROWSER }),
+      { STEAM_API_KEY: 'k', STEAM_HEALTH: health }, ctx);
+    assert.ok(res.status >= 400);
+    assert.deepEqual(seen.at(-1), ['fail', 'vanity']);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('parseRoute: case-insensitive link type, empty segments skipped, slashes-only is home', () => {
+  assert.deepEqual(parseRoute('/ID/Nick'), { kind: 'id', value: 'Nick' });
+  assert.deepEqual(parseRoute('/Profiles/76561197960287930'), { kind: 'profiles', value: '76561197960287930' });
+  assert.deepEqual(parseRoute('/id//nick'), { kind: 'id', value: 'nick' });
+  assert.deepEqual(parseRoute('///'), { kind: 'home' });
+});
+
+test('429 page: a non-numeric Retry-After from Steam becomes 60 s, never NaN', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('', { status: 429, headers: { 'retry-after': 'Wed, 21 Oct 2026 07:28:00 GMT' } });
+  try {
+    const res = await handleRequest(new Request('https://example.com/id/someone', { headers: BROWSER }), { STEAM_API_KEY: 'k' }, ctx);
+    assert.equal(res.status, 429);
+    assert.equal(res.headers.get('retry-after'), '60');
+    assert.match(await res.text(), /try again in 60 seconds/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

@@ -8,7 +8,8 @@ import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { handleRequest } from './src/core.js';
+import { handleRequest, getConfiguredApiKeys } from './src/core.js';
+import { SteamHealth } from './src/steam-health.js';
 import { openDb, SqliteKV } from './src/feed/store.js';
 import { createFeed } from './src/feed/index.js';
 
@@ -89,7 +90,7 @@ async function serveAsset(path, req, res) {
   try {
     const body = await readFile(ASSETS[path]);
     const etag = `"${createHash('sha256').update(body).digest('hex').slice(0, 16)}"`;
-    const headers = { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', ETag: etag };
+    const headers = { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', ETag: etag, 'X-Content-Type-Options': 'nosniff' };
     if (matchesEtag(req.headers['if-none-match'], etag)) {
       res.writeHead(304, headers).end();
       return;
@@ -109,14 +110,16 @@ function sendJson(res, status, data) {
 export function createServer({ env = process.env, dbPath = env.DB_PATH || './data/steamcommunitx.db', fetchImpl = fetch, log = console, shutdownMs = 5000 } = {}) {
   if (dbPath !== ':memory:') mkdirSync(dirname(resolve(dbPath)), { recursive: true });
   const db = openDb(dbPath);
+  const steamHealth = new SteamHealth({ hasKeys: getConfiguredApiKeys(env).length > 0 });
   const runtimeEnv = {
     ...env,
+    STEAM_HEALTH: steamHealth,
     STEAM_ID_CACHE: new SqliteKV(db, 'steamid'),
     API_KEY_STATUS: new SqliteKV(db, 'keystatus')
   };
   const feed = env.FEED_ENABLED === '0'
     ? null
-    : createFeed({ db, env: runtimeEnv, fetchImpl, log, blockedWordsFile: env.BLOCKED_WORDS_FILE });
+    : createFeed({ db, env: runtimeEnv, fetchImpl, log, blockedWordsFile: env.BLOCKED_WORDS_FILE, health: steamHealth });
   if (feed) runtimeEnv.FEED = feed;
 
   const inflight = new Set();
@@ -132,7 +135,10 @@ export function createServer({ env = process.env, dbPath = env.DB_PATH || './dat
     try {
       const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
       if (url.pathname === '/healthz') {
-        return sendJson(res, 200, { ok: true, feed: feed ? feed.health() : null });
+        // 503 when Steam is unusable, so an external uptime check alerts on a
+        // revoked key or an outage, not only on a dead process.
+        const steam = steamHealth.status();
+        return sendJson(res, steam.healthy ? 200 : 503, { ok: steam.healthy, feed: feed ? feed.health() : null, steam });
       }
       if (url.pathname.startsWith('/assets/')) {
         if (feed && Object.hasOwn(ASSETS, url.pathname)) return await serveAsset(url.pathname, req, res);
