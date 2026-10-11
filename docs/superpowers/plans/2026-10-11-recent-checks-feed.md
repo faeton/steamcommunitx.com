@@ -38,7 +38,7 @@ Decided after the plan was written; it overrides the code below wherever they di
 - **No opt-out list.** Drop `HIDDEN_IDS_FILE`, `loadIds`, the `hidden` set and the hidden-id tests. `reloadLists()` (SIGHUP) only re-reads `BLOCKED_WORDS_FILE` and broadcasts nothing.
 - **`players` columns:** `found INTEGER` (Steam returned the player) replaces `visible`; new `private INTEGER` (`communityvisibilitystate !== 3`). `recent`, `hourCount` and the teaser's `seen` require `found = 1` only.
 - **Entries** gain `private: boolean`. The browser row shows a small lock badge on the avatar (`title`: "Private Steam profile", i18n key `privateProfile`).
-- **Removals** (`onEntries(ids, removed)` → snapshot) now only cover players that were found before and Steam no longer returns.
+- **No removal broadcasts.** A known player Steam omits keeps its last data, so `onEntries(ids)` has no `removed` argument (changed during the final review).
 
 ---
 

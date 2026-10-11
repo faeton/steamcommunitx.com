@@ -74,18 +74,23 @@ export class Enricher {
     const now = this.clock();
     const fresh = this.store.freshPlayerIds(ids, FRESH_MS);
     const stale = ids.filter(id => !fresh.has(id));
-    const wasFound = new Set(stale.filter(id => this.store.getPlayer(id)?.found));
     const players = [];
     try {
       for (let i = 0; i < stale.length; i += CHUNK) {
         const chunk = stale.slice(i, i + CHUNK);
         const got = await this.fetchSummaries(chunk);
+        // Nobody at all out of several real profile visits is a Steam glitch,
+        // not a batch of deleted accounts: keep them queued and back off.
+        if (!got.length && chunk.length > 1) throw new Error('Steam returned an empty player list');
         const byId = new Map(got.map(p => [String(p.steamid), p]));
         for (const id of chunk) {
           const summary = byId.get(id);
-          players.push(summary
-            ? toPlayerRow(summary, this.blockedWords(), now)
-            : { steamid: id, name: '—', avatarHash: '', found: 0, private: 0, fetchedAt: now });
+          if (summary) players.push(toPlayerRow(summary, this.blockedWords(), now));
+          // An omitted player we already know keeps its last data (Steam
+          // omissions are usually transient); an unknown one is not shown.
+          else if (!this.store.getPlayer(id)?.found) {
+            players.push({ steamid: id, name: '—', avatarHash: '', found: 0, private: 0, fetchedAt: now });
+          }
         }
       }
     } catch (error) {
@@ -95,8 +100,7 @@ export class Enricher {
     }
     this.failures = 0;
     this.store.completePending(ids, players);
-    const removed = players.filter(p => !p.found && wasFound.has(p.steamid)).map(p => p.steamid);
-    this.onEntries(ids, removed);
+    this.onEntries(ids);
     return { processed: ids.length };
   }
 }

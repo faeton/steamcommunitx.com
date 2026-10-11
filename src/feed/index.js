@@ -53,13 +53,7 @@ export function createFeed({
     blockedWords: () => blocked,
     clock,
     log,
-    onEntries(ids, removed = []) {
-      // Removals (accounts Steam stopped returning) go out as a full snapshot
-      // that clients reconcile against, never as a list of ids.
-      if (removed.length) {
-        hub.broadcast('snapshot', snapshot());
-        return;
-      }
+    onEntries(ids) {
       const wanted = new Set(ids);
       const entries = recentEntries().filter(e => wanted.has(e.steamId64));
       if (entries.length) hub.broadcast('entries', { hourCount: hourCount(), generatedAt: clock(), entries });

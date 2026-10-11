@@ -36,24 +36,51 @@ test('createSteamSummaries: a 200 without a players array is an error', async ()
   await assert.rejects(fetchSummaries([id(1)]), /malformed/);
 });
 
-test('Enricher.tick: reports players Steam stopped returning, not ones that turned private', async () => {
+test('Enricher.tick: a player Steam omits keeps its last known data; a private turn applies', async () => {
   const store = new FeedStore(openDb(':memory:'), () => 100 * 3_600_000);
   for (const n of [1, 2]) {
     store.addCheck(id(n));
     store.completePending([id(n)], [{ steamid: id(n), name: 'was public', avatarHash: HASH, found: 1, private: 0, fetchedAt: 0 }]);
     store.addCheck(id(n));
   }
-  const seen = [];
+  const announced = [];
   const enricher = new Enricher({
     store,
-    // id(1) vanished from Steam; id(2) went private.
+    // id(1) omitted (glitch or deleted); id(2) went private.
     fetchSummaries: async ids => ids.filter(s => s === id(2)).map(s => summary(s, { communityvisibilitystate: 1 })),
-    onEntries: (ids, removed) => seen.push(removed),
+    onEntries: ids => announced.push(...ids),
     blockedWords: () => [], clock: () => 100 * 3_600_000, log: quiet
   });
   await enricher.tick();
-  assert.deepEqual(seen, [[id(1)]]);
+  assert.equal(store.getPlayer(id(1)).found, 1);
+  assert.equal(store.getPlayer(id(1)).name, 'was public');
   assert.equal(store.getPlayer(id(2)).private, 1);
+  assert.equal(store.pendingCount(), 0);
+  assert.deepEqual(announced.sort(), [id(1), id(2)].sort());
+});
+
+test('Enricher.tick: an empty answer for several ids is treated as a Steam glitch', async () => {
+  const store = new FeedStore(openDb(':memory:'), () => 1);
+  store.addCheck(id(1));
+  store.addCheck(id(2));
+  const enricher = new Enricher({
+    store, fetchSummaries: async () => [], onEntries() {}, blockedWords: () => [], clock: () => 1, log: quiet
+  });
+  const r = await enricher.tick();
+  assert.match(r.error.message, /empty/);
+  assert.equal(store.pendingCount(), 2);
+  assert.equal(store.getPlayer(id(1)), null);
+});
+
+test('Enricher.tick: a single unknown id is stored as not found', async () => {
+  const store = new FeedStore(openDb(':memory:'), () => 1);
+  store.addCheck(id(1));
+  const enricher = new Enricher({
+    store, fetchSummaries: async () => [], onEntries() {}, blockedWords: () => [], clock: () => 1, log: quiet
+  });
+  await enricher.tick();
+  assert.equal(store.pendingCount(), 0);
+  assert.equal(store.getPlayer(id(1)).found, 0);
 });
 
 test('createSteamSummaries: no keys is an error', async () => {
