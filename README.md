@@ -129,10 +129,19 @@ The home list:
 Privacy and moderation:
 - Only the **checked profile** is shown, never who checked it. IP addresses are never stored (rate limiting uses a daily-salted hash kept in memory).
 - Only public Steam data is shown: persona name and avatar. Steam publishes these even for private profiles, so private profiles are listed too, marked with a small lock. Accounts Steam does not know are never shown; a known player Steam temporarily omits keeps its last name and avatar.
-- Raw checks are kept for 24 hours, player names/avatars for 7 days after the last check.
+- Raw checks are kept for 24 hours (the watchlist can ask about any ID within that window; nothing about the visitor is exposed), player names/avatars for 7 days after the last check.
 - Nicknames are cleaned (control/bidi characters, excessive combining marks, length) and words listed in `BLOCKED_WORDS_FILE` are masked. After editing the file, send `SIGHUP` (`docker kill -s HUP <container>`); new and refreshed names use the new list.
 
-Endpoints: `GET /api/recent.json` (snapshot, cacheable for 10 s), `GET /api/stream` (Server-Sent Events), `GET /healthz`.
+### Watching a team (`?check=`)
+
+Before a Battle Cup a team can share one link, for example `/?check=123456789,163191061`, with up to 10 players. Every ID may be a Dota ID, a SteamID64, `[U:1:x]` or a pasted Steam/Dotabuff/OpenDota/STRATZ profile URL. The *Watching* block above the list shows, for each player, when a check was last recorded here in the last 24 hours and how many, and it updates live:
+- the page polls the status every 20 seconds while the list is non-empty, also in a background tab (browsers slow that to about once a minute);
+- a new check flashes the row, highlights the player on the board, and puts a counter in the tab title while you are away; the 🔔 button adds a chime and a browser notification;
+- the IDs can be edited in place; the address bar always holds the current link, and the last list is remembered in the browser for a bare visit.
+
+"No checks recorded" covers this redirector only, and your own lookups count as checks too. A link with `?check` is marked `noindex`, and the page sends `Referrer-Policy: strict-origin-when-cross-origin` so the IDs do not leak to the sites it links to.
+
+Endpoints: `GET /api/recent.json` (snapshot, cacheable for 10 s), `GET /api/stream` (Server-Sent Events), `GET /api/check.json?ids=…` (watchlist status, up to 10 IDs, 60 lookups per minute per IP), `GET /healthz`.
 
 ## Contributing
 Feel free to submit pull requests for improvements, bug fixes, or additional features.

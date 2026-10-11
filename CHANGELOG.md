@@ -3,6 +3,21 @@
 All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.5.0] - 2026-10-11
+
+### Added
+- Watchlist: `/?check=<ids>` shows up to 10 players with their last recorded
+  check in the last 24 hours and signals new ones live (row flash, board
+  highlight, tab-title counter, optional chime and notification). IDs can be
+  Dota IDs, SteamID64, `[U:1:x]` or profile URLs; the list is editable,
+  shareable and remembered in the browser.
+- `GET /api/check.json?ids=…`: read-only watchlist status, rate-limited per IP.
+
+### Changed
+- The home page sends `Referrer-Policy: strict-origin-when-cross-origin`;
+  `?check` pages are `noindex`.
+- Relative times past an hour read "3 h ago".
+
 ## [2.4.0] - 2026-10-11
 
 ### Added

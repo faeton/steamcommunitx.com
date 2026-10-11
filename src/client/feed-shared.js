@@ -344,12 +344,15 @@ export function accountToSteamId64(account) {
   return (STEAM64_BASE + BigInt(account)).toString();
 }
 
-// Ids from a fresh status poll whose latest check is newer than what was seen
-// before. An id without a baseline yet only gets one (adding never notifies).
+// Ids from a fresh status poll with a check not seen before: a newer latest
+// check, or more checks at the same instant. The 24 h count alone can drop
+// (old checks expire), so a lower count is never news. An id without a
+// baseline yet only gets one (adding never notifies).
 export function watchNews(baseline, items) {
   return items.filter(it => {
     const prev = baseline.get(it.dotaId);
-    return prev && it.lastTs != null && (prev.lastTs == null || it.lastTs > prev.lastTs);
+    if (!prev || it.lastTs == null) return false;
+    return prev.lastTs == null || it.lastTs > prev.lastTs || (it.lastTs === prev.lastTs && it.count > prev.count);
   }).map(it => it.dotaId);
 }
 

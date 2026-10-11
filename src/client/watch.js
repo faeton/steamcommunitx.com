@@ -12,6 +12,7 @@ import { addCount, away } from './title.js';
 const POLL_MS = 20000;
 const LIMITED_MS = 60000;
 const NUDGE_MS = 1000;
+const FETCH_TIMEOUT_MS = 10000;
 const STORE_KEY = 'watch_ids';
 const BELL_KEY = 'watch_bell';
 
@@ -25,6 +26,7 @@ const status = new Map();           // dotaId -> latest status item
 let pollTimer = null;
 let nudgeTimer = null;
 let inFlight = false;
+let retryAt = 0;                    // after a 429 nothing asks before this
 let bell = false;
 let audio = null;
 let changeHandler = () => {};
@@ -159,11 +161,11 @@ function syncUrl() {
   history.replaceState(history.state, '', u);
 }
 
-function setList(next) {
+function setList(next, save = true) {
   list = next;
   watched = new Set(list.map(accountToSteamId64));
   for (const id of status.keys()) if (!list.includes(id)) status.delete(id);
-  storage(s => list.length ? s.setItem(STORE_KEY, list.join(',')) : s.removeItem(STORE_KEY));
+  if (save) storage(s => list.length ? s.setItem(STORE_KEY, list.join(',')) : s.removeItem(STORE_KEY));
   syncUrl();
   render();
   changeHandler();
@@ -183,19 +185,29 @@ async function refresh() {
   clearTimeout(pollTimer);
   clearTimeout(nudgeTimer);
   if (!list.length || inFlight) { schedule(POLL_MS); return; }
+  const now = Date.now();
+  if (now < retryAt) { schedule(retryAt - now); return; }
   inFlight = true;
   const asked = list.join(',');
   let wait = POLL_MS;
+  // A request that never settles must not stop polling for good.
+  const ctl = 'AbortController' in window ? new AbortController() : null;
+  const killer = ctl && setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch('/api/check.json?ids=' + asked, { cache: 'no-store' });
-    if (res.status === 429) wait = LIMITED_MS;
-    else if (res.ok) {
+    const res = await fetch('/api/check.json?ids=' + asked, { cache: 'no-store', signal: ctl && ctl.signal });
+    if (res.status === 429) {
+      wait = LIMITED_MS;
+      retryAt = Date.now() + LIMITED_MS;
+    } else if (res.ok) {
       const data = await res.json();
       // Ids that got no baseline yet (just added) only get one now.
       if (list.join(',') === asked) apply(data.items || [], true);
     }
-  } catch { /* offline; try again at the next poll */ }
-  inFlight = false;
+  } catch { /* offline or timed out; try again at the next poll */
+  } finally {
+    clearTimeout(killer);
+    inFlight = false;
+  }
   schedule(wait);
 }
 
@@ -303,9 +315,11 @@ function init() {
   wire();
   setBell(storage(s => s.getItem(BELL_KEY)) === '1');
   if (data.watch) for (const it of data.watch.items || []) status.set(String(it.dotaId), it);
+  // A shared link adopts its set; a bare visit restores the last one. A link
+  // whose check list is empty or invalid shows nothing and keeps the saved set.
   const fromUrl = parseCheckList(data.list || []);
-  // A shared link adopts its set; a bare visit restores the last one.
-  setList(fromUrl.length ? fromUrl : parseCheckList(storage(s => s.getItem(STORE_KEY)) || ''));
+  if (new URLSearchParams(location.search).has('check')) setList(fromUrl, fromUrl.length > 0);
+  else setList(parseCheckList(storage(s => s.getItem(STORE_KEY)) || ''));
   if (list.length) data.watch ? schedule(POLL_MS) : refresh();
   setInterval(() => { if (!document.hidden) tick(); }, 1000);
 }

@@ -73,3 +73,7 @@ test('titleText: watch counter first, then the feed star, then the page title', 
   assert.equal(titleText('Site', 0, true), '★ Site');
   assert.equal(titleText('Site', 3, true), '(3) ★ Site');
 });
+
+test('watchNews: a higher count with the same lastTs is news too', () => {
+  assert.deepEqual(watchNews(new Map([['1', { count: 1, lastTs: 100 }]]), [{ dotaId: '1', count: 2, lastTs: 100 }]), ['1']);
+});
