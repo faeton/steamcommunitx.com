@@ -1,0 +1,27 @@
+# Copy to docker-compose.yml (gitignored) and adjust. The port is bound to
+# localhost only: put a reverse proxy (see deploy/Caddyfile.example) in front.
+services:
+  steamcommunitx:
+    build: .
+    image: steamcommunitx:latest
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - ./data:/data                 # SQLite; must be writable by uid 1000
+      - ./config:/config:ro          # optional blocked-words list
+    # Keep a traffic spike from starving other services on the same host.
+    cpus: 1.0
+    mem_limit: 256m
+    pids_limit: 128
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

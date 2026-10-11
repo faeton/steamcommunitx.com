@@ -1,0 +1,11 @@
+.git
+.wrangler
+.superpowers
+.impeccable
+node_modules
+data
+test
+docs
+.env
+.dev.vars
+*.md
