@@ -62,7 +62,7 @@ export function createFeed({
       }
       const wanted = new Set(ids);
       const entries = recentEntries().filter(e => wanted.has(e.steamId64));
-      if (entries.length) hub.broadcast('entries', { hourCount: hourCount(), entries });
+      if (entries.length) hub.broadcast('entries', { hourCount: hourCount(), generatedAt: clock(), entries });
     }
   });
 

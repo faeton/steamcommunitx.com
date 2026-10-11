@@ -5,7 +5,7 @@
 // the Dota in-game browser runs an older Chromium.
 import {
   t, ago, pickLang, avatarUrl, splitTerms, matchesTerms, highlightRanges,
-  timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, HOUR_MS
+  timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, isStale, insertIndex, HOUR_MS
 } from './feed-shared.js';
 
 const ROW = 56;
@@ -43,6 +43,7 @@ const incoming = [];      // entries waiting to drip in
 let terms = [];
 let loaded = false;
 let hourCount = 0;
+let lastGeneratedAt = 0;
 let paused = false;
 let hover = false;
 let releaseTimer = null;  // idle countdown until auto-release
@@ -224,7 +225,8 @@ function insert(e, animated) {
   if (old) dropRow(old);
   const r = makeRow(e);
   rows.set(e.steamId64, r);
-  list.insertBefore(r, list.querySelector('.fd-row'));
+  const shown = [...list.querySelectorAll('.fd-row')];
+  list.insertBefore(r, shown[insertIndex(shown.map(x => x._e.lastTs), e.lastTs)] || null);
   if (animated && !r.hidden && !reduce) flap(r);
   if (loaded && terms.length && !r.hidden) notifyPinned(r);
 }
@@ -424,6 +426,8 @@ window.addEventListener('focus', () => { document.title = baseTitle; });
 // ---- data ----
 
 function onData(data, isSnapshot) {
+  if (isStale(data, lastGeneratedAt)) return;
+  lastGeneratedAt = Math.max(lastGeneratedAt, data.generatedAt || 0);
   hourCount = data.hourCount;
   renderCount();
   const entries = data.entries || [];

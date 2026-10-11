@@ -166,3 +166,16 @@ export function idsToRemove(shown, entries, limit = 200) {
   const floor = entries.length >= limit ? Math.min(...entries.map(e => e.lastTs)) : -Infinity;
   return [...shown].filter(([id, e]) => !present.has(id) && e.lastTs >= floor).map(([id]) => id);
 }
+
+// Polls can overlap and transports switch, so an older payload may arrive
+// after a newer one; applying it would roll the list back.
+export function isStale(data, lastGeneratedAt) {
+  return typeof data.generatedAt === 'number' && data.generatedAt < lastGeneratedAt;
+}
+
+// Position for a row in a list sorted by lastTs, newest first. A player
+// enriched late can be older than rows already shown.
+export function insertIndex(timestamps, ts) {
+  const i = timestamps.findIndex(other => other <= ts);
+  return i === -1 ? timestamps.length : i;
+}

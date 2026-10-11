@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   avatarUrl, pickLang, t, ago, splitTerms, matchesTerms, highlightRanges,
-  timeBlock, dripDelay, isNewer, diffEntries, idsToRemove
+  timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, isStale, insertIndex
 } from '../src/client/feed-shared.js';
 
 const HASH = 'fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb';
@@ -91,4 +91,19 @@ test('idsToRemove: rows missing from an authoritative snapshot', () => {
   // A full (truncated) snapshot only speaks for its own time range.
   const full = [{ steamId64: 'keep', lastTs: 500 }, { steamId64: 'x', lastTs: 300 }];
   assert.deepEqual(idsToRemove(shown, full, 2), ['gone']);
+});
+
+test('isStale: payloads generated before the newest one applied are ignored', () => {
+  assert.equal(isStale({ generatedAt: 100 }, 200), true);
+  assert.equal(isStale({ generatedAt: 200 }, 200), false);
+  assert.equal(isStale({ generatedAt: 300 }, 200), false);
+  assert.equal(isStale({}, 200), false); // no generation: cannot tell, accept
+});
+
+test('insertIndex: newest first, a late older entry lands below newer rows', () => {
+  assert.equal(insertIndex([500, 400, 100], 450), 1);
+  assert.equal(insertIndex([500, 400, 100], 600), 0);
+  assert.equal(insertIndex([500, 400, 100], 50), 3);
+  assert.equal(insertIndex([500, 400], 400), 1); // ties go above: newest arrival on top
+  assert.equal(insertIndex([], 1), 0);
 });

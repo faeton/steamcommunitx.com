@@ -80,6 +80,7 @@ test('private profiles are listed and flagged; accounts Steam did not return nev
   await feed.tick();
   const event = await readEvent(reader);
   assert.match(event, /^event: entries\n/);
+  assert.match(event, /"generatedAt":\d+/);
   assert.match(event, new RegExp(A));
   assert.match(event, new RegExp(`${C}[^}]*"private":true`));
   assert.doesNotMatch(event, new RegExp(D));
