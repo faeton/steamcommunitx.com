@@ -50,7 +50,7 @@ test('FeedStore: checks feed pending; completion stores players atomically', () 
     { steamId64: A, name: 'akamai', avatarHash: 'a'.repeat(40), private: false, lastTs: clock(), count: 2 },
     { steamId64: B, name: 'locked', avatarHash: '', private: true, lastTs: clock() - 1000, count: 1 }
   ]);
-  assert.equal(store.hourCount(clock() - 3_600_000), 3); // C was not returned by Steam: not counted
+  assert.equal(store.hourCount(clock() - 3_600_000), 2); // distinct players; C was not returned by Steam
   assert.deepEqual(store.seen(A, clock() - 3_600_000), { lastTs: clock(), count: 2 });
   assert.equal(store.seen('76561197960287999', clock() - 3_600_000), null);
 });

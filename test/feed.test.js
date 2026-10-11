@@ -54,7 +54,7 @@ test('/api/recent.json: enriched entries with dotaId and counts, sanitised names
   const res = await feed.handle(new Request('https://example.com/api/recent.json'));
   assert.equal(res.headers.get('cache-control'), 'public, max-age=10');
   const body = await res.json();
-  assert.equal(body.hourCount, 3);
+  assert.equal(body.hourCount, 2); // A twice + B: two players
   const a = body.entries.find(e => e.steamId64 === A);
   assert.deepEqual(a, { steamId64: A, dotaId: '22202', name: '<script>x</script>', avatarHash: HASH, private: false, lastTs: a.lastTs, count: 2 });
 });

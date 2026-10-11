@@ -83,7 +83,7 @@ export class FeedStore {
         'GROUP BY c.steamid ORDER BY lastTs DESC LIMIT ?'
       ),
       // Counts the same players the list shows (enriched and returned by Steam).
-      hourCount: db.prepare('SELECT COUNT(*) AS n FROM checks c JOIN players p ON p.steamid = c.steamid WHERE c.ts >= ? AND p.found = 1'),
+      hourCount: db.prepare('SELECT COUNT(DISTINCT c.steamid) AS n FROM checks c JOIN players p ON p.steamid = c.steamid WHERE c.ts >= ? AND p.found = 1'),
       seen: db.prepare('SELECT MAX(ts) AS lastTs, COUNT(*) AS count FROM checks WHERE steamid = ? AND ts >= ?'),
       purgeChecks: db.prepare('DELETE FROM checks WHERE ts < ?'),
       purgePlayers: db.prepare('DELETE FROM players WHERE fetched_at < ? AND steamid NOT IN (SELECT steamid FROM checks)'),
