@@ -1,5 +1,5 @@
 import { convertToDota2Id, accountIdToSteamId64 } from '../core.js';
-import { HOUR_MS } from '../client/feed-shared.js';
+import { HOUR_MS, parseCheckList, accountToSteamId64 } from '../client/feed-shared.js';
 import { loadWords } from './sanitize.js';
 import { FeedStore } from './store.js';
 import { RateLimiter } from './ratelimit.js';
@@ -18,6 +18,8 @@ function isSteamId64(value) {
 const RECENT_LIMIT = 200;
 const MAX_PENDING = 5000; // beyond this, hits are dropped until Steam catches up
 const FIRST_TICK_MS = 30_000;
+const DAY_MS = 24 * HOUR_MS;
+const WATCH_PER_MIN = 60; // per IP, shared by /api/check.json and the home pre-render
 
 // Report each GetPlayerSummaries outcome to the Steam health monitor.
 function reporting(fetchSummaries, health) {
@@ -48,6 +50,7 @@ export function createFeed({
   const store = new FeedStore(db, clock);
   const perIp = new RateLimiter(20, 60_000, clock);
   const perPlayer = new RateLimiter(6, 60_000, clock);
+  const perWatcher = new RateLimiter(WATCH_PER_MIN, 60_000, clock);
   const hub = new SseHub({ maxClients });
   let blocked = loadWords(blockedWordsFile, log);
   let lastTickAt = null;
@@ -68,6 +71,15 @@ export function createFeed({
 
   function snapshot() {
     return { hourCount: hourCount(), generatedAt: clock(), entries: recentEntries() };
+  }
+
+  // Watchlist status for canonical Dota ids (parseCheckList output). Read-only:
+  // never queues a Steam lookup. null when this IP is over its budget.
+  function watch(dotaIds, ipKey) {
+    if (!perWatcher.allow(ipKey || '-')) return null;
+    const ids = dotaIds.map(accountToSteamId64);
+    const items = store.checkStatus(ids, clock() - DAY_MS).map((s, i) => ({ dotaId: dotaIds[i], ...s }));
+    return { generatedAt: clock(), items };
   }
 
   const enricher = new Enricher({
@@ -142,6 +154,12 @@ export function createFeed({
       if (pathname === '/api/recent.json') {
         return json(snapshot(), 200, { 'Cache-Control': 'public, max-age=10' });
       }
+      if (pathname === '/api/check.json') {
+        const { searchParams } = new URL(request.url);
+        const data = watch(parseCheckList(searchParams.getAll('ids')), request.headers.get('cf-connecting-ip') || '');
+        if (!data) return json({ error: 'too many requests' }, 429, { 'Retry-After': '60', 'Cache-Control': 'no-store' });
+        return json(data, 200, { 'Cache-Control': 'no-store' });
+      }
       if (pathname === '/api/stream') {
         // HEAD must not open a stream: nobody would ever read or cancel it.
         if (request.method === 'HEAD') return new Response(null, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' } });
@@ -162,6 +180,8 @@ export function createFeed({
     },
 
     tick,
+
+    watch,
 
     // Same payload as /api/recent.json; the home page pre-renders from it.
     snapshot,

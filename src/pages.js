@@ -1,4 +1,4 @@
-import { t, ago, avatarUrl, timeBlock, metaLine, PLAYER_SITES, STEAM_PROFILE, LOCK_PATH } from './client/feed-shared.js';
+import { t, ago, avatarUrl, timeBlock, metaLine, watchMeta, accountToSteamId64, PLAYER_SITES, STEAM_PROFILE, LOCK_PATH } from './client/feed-shared.js';
 
 export function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -146,6 +146,86 @@ export function renderFeedSection(snapshot, lang = 'en', now = Date.now()) {
     </section>`;
 }
 
+// Watchlist (?check=): the same row shape as the board. `list` holds canonical
+// Dota ids (parseCheckList), `watch` the status payload or null when it could
+// not be fetched (the browser fills it in then).
+function watchRow(id, item, lang, now) {
+  const dotaId = String(id).replace(/\D/g, '');
+  const steamId64 = item ? String(item.steamId64).replace(/\D/g, '') : accountToSteamId64(dotaId);
+  const src = item ? avatarUrl(item.avatarHash) : '';
+  const lock = item && item.private
+    ? `<span class="fd-lock" title="${escapeHtml(t(lang, 'privateProfile'))}" role="img" aria-label="${escapeHtml(t(lang, 'privateProfile'))}"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="${LOCK_PATH}"></path></svg></span>`
+    : '';
+  const name = escapeHtml(item && item.name ? item.name : dotaId);
+  const badge = item && item.count > 1 ? `<span class="fd-x">×${Number(item.count)}</span>` : '';
+  const meta = item ? watchMeta(lang, { ...item, dotaId }, now) : `id ${dotaId}`;
+  const remove = t(lang, 'watchRemove');
+  return `<div class="wt-row${item && item.lastTs != null ? ' wt-hit' : ''}" data-id="${dotaId}"><span class="fd-avw"><img class="fd-av" alt="" width="36" height="36" decoding="async"${src ? ` src="${src}"` : ''}>${lock}</span>` +
+    `<div class="fd-who"><div class="fd-nick"><a class="fd-name" href="${STEAM_PROFILE}${steamId64}" title="${name}">${name}</a>${badge}</div>` +
+    `<div class="fd-meta">${escapeHtml(meta)}</div></div>` +
+    `<span class="fd-links">${PLAYER_SITES.map(p => {
+      const label = t(lang, 'openOn', { site: p.site });
+      return `<a class="fd-go fd-go-${p.key}" href="${p.url}${dotaId}" title="${escapeHtml(label)}">${p.label}</a>`;
+    }).join('')}</span><button class="wt-x" type="button" title="${escapeHtml(remove)}" aria-label="${escapeHtml(remove)}">×</button></div>`;
+}
+
+export function renderWatchBlock(list = [], watch = null, lang = 'en', now = Date.now()) {
+  const byId = new Map(((watch && watch.items) || []).map(i => [String(i.dotaId), i]));
+  const rows = list.map(id => watchRow(id, byId.get(String(id)) || null, lang, now)).join('');
+  const data = JSON.stringify({ list, watch }).replace(/</g, '\\u003c');
+  const tr = key => escapeHtml(t(lang, key));
+  return `
+    <section class="wt${list.length ? '' : ' wt-empty'}" id="watch" aria-label="${tr('watchTitle')}">
+      <div class="wt-head">
+        <h2>${tr('watchTitle')}</h2><span class="wt-hint">${tr('watchHint')}</span>
+        <span class="wt-tools">
+          <button class="wt-btn" id="watch-bell" type="button" aria-pressed="false" title="${tr('watchBell')}" aria-label="${tr('watchBell')}">🔔</button>
+          <button class="wt-btn" id="watch-copy" type="button">${tr('watchCopy')}</button>
+          <button class="wt-btn" id="watch-clear" type="button">${tr('watchClear')}</button>
+        </span>
+      </div>
+      <p class="wt-intro">${tr('watchIntro')}</p>
+      <div class="wt-list" id="watch-list">${rows}</div>
+      <form class="wt-add" id="watch-add">
+        <input id="watch-in" type="text" autocomplete="off" spellcheck="false" placeholder="${tr('watchPlaceholder')}" aria-label="${tr('watchPlaceholder')}">
+        <button class="wt-btn" type="submit">${tr('watchAdd')}</button>
+      </form>
+      <script type="application/json" id="check-data">${data}</script>
+    </section>`;
+}
+
+const WATCH_CSS = `
+    .wt { margin-bottom: 28px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    .wt-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px 10px 16px; border-bottom: 1px solid var(--border); }
+    .wt-head h2 { margin: 0; font-size: 1rem; color: var(--accent); letter-spacing: 0.04em; text-transform: uppercase; }
+    .wt-hint { color: var(--muted); font-size: 12px; }
+    .wt-tools { margin-left: auto; display: flex; gap: 6px; }
+    .wt-btn {
+      font: inherit; font-size: 13px; color: var(--text); background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 5px 10px; cursor: pointer; white-space: nowrap;
+    }
+    .wt-btn:hover { border-color: var(--accent); }
+    .wt-btn[aria-pressed="false"]#watch-bell { filter: grayscale(1); opacity: .6; }
+    .wt-intro { margin: 0; padding: 12px 16px 0; color: var(--muted); font-size: 14px; }
+    .wt:not(.wt-empty) .wt-intro, .wt.wt-empty .wt-hint, .wt.wt-empty .wt-tools { display: none; }
+    .wt-list { background: var(--bg); }
+    .wt-row { height: 56px; display: flex; align-items: center; gap: 12px; padding: 0 8px 0 16px; overflow: hidden; }
+    .wt-row + .wt-row { border-top: 1px solid rgba(42,56,72,0.55); }
+    .wt-row:not(.wt-hit) .fd-meta { opacity: .75; }
+    .wt-row.wt-hit .fd-meta { color: var(--gold); }
+    .wt-row.wt-new { animation: fd-flash 2s ease-out; }
+    .wt-x { flex: none; width: 28px; height: 28px; border: 0; background: none; color: var(--muted); font-size: 18px; cursor: pointer; border-radius: 6px; }
+    .wt-x:hover { color: var(--text); background: var(--surface-2); }
+    .wt-add { display: flex; gap: 8px; padding: 10px 12px 12px 16px; }
+    .wt-add input {
+      flex: 1; min-width: 0; font: inherit; font-size: 14px; color: var(--text); background: var(--bg);
+      border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; outline: none;
+    }
+    .wt-add input:focus { border-color: var(--accent); }
+    .wt-full .wt-add { display: none; }
+    .fd-row.fd-watched { box-shadow: inset 3px 0 0 var(--gold); background: rgba(245,196,81,0.06); }
+    @media (prefers-reduced-motion: reduce) { .wt-row.wt-new { animation: none; } }`;
+
 const FEED_CSS = `
     .fd { margin-bottom: 40px; }
     .fd-head h2 { margin: 0 0 12px; font-size: 1rem; color: var(--accent); letter-spacing: 0.04em; text-transform: uppercase; }
@@ -247,7 +327,7 @@ export function indexPage(hostname, analytics = '', opts = {}) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Steam → Dotabuff Redirector</title>
+  <title>Steam → Dotabuff Redirector</title>${opts.watchList && opts.watchList.length ? '\n  <meta name="robots" content="noindex">' : ''}
   <meta name="description" content="Drop-in replacement for steamcommunity.com that redirects any Steam profile URL straight to the matching Dotabuff player page.">
   ${analytics}
   <style>
@@ -388,7 +468,7 @@ export function indexPage(hostname, analytics = '', opts = {}) {
       .ex-row { gap: 8px; }
       .ex-arrow { transform: rotate(90deg); margin: 4px auto; }
       footer { justify-content: center; text-align: center; }
-    }${feed ? FEED_CSS : ''}
+    }${feed ? WATCH_CSS + FEED_CSS : ''}
   </style>
 </head>
 <body>
@@ -398,7 +478,7 @@ export function indexPage(hostname, analytics = '', opts = {}) {
       <h1>One-line redirect to <span class="accent">Dotabuff</span></h1>
       <p class="tagline">Swap <code style="color:var(--accent)">steamcommunity.com</code> for <code style="color:var(--accent)">${host}</code> in any Steam profile URL — get sent straight to the matching Dotabuff page.</p>
     </header>
-${feed ? renderFeedSection(opts.snapshot, opts.lang || 'en') : ''}
+${feed ? renderWatchBlock(opts.watchList || [], opts.watch || null, opts.lang || 'en') + renderFeedSection(opts.snapshot, opts.lang || 'en') : ''}
 
     <section class="examples" aria-label="URL conversion examples">${exampleCards}
     </section>

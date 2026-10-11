@@ -16,7 +16,9 @@ import { createFeed } from './src/feed/index.js';
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const ASSETS = {
   '/assets/feed.js': resolve(ROOT, 'src/client/feed.js'),
-  '/assets/feed-shared.js': resolve(ROOT, 'src/client/feed-shared.js')
+  '/assets/feed-shared.js': resolve(ROOT, 'src/client/feed-shared.js'),
+  '/assets/watch.js': resolve(ROOT, 'src/client/watch.js'),
+  '/assets/title.js': resolve(ROOT, 'src/client/title.js')
 };
 
 function toWebRequest(req, url) {

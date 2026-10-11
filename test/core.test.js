@@ -413,3 +413,29 @@ test('429 page: a non-numeric Retry-After from Steam becomes 60 s, never NaN', a
     globalThis.fetch = realFetch;
   }
 });
+
+test('home ?check: parsed list pre-rendered with status from feed.watch (keyed by IP)', async () => {
+  const calls = [];
+  const feed = { ...fakeFeed(), watch(ids, ip) {
+    calls.push([ids, ip]);
+    return { generatedAt: Date.now(), items: ids.map(id => ({ dotaId: id, steamId64: '76561197960287930', lastTs: null, count: 0, name: `n${id}`, avatarHash: null, private: false })) };
+  } };
+  const req = new Request('https://example.com/?check=22202,junk&check=76561197960287931', { headers: { 'cf-connecting-ip': '1.2.3.4' } });
+  const res = await handleRequest(req, { FEED: feed }, ctx);
+  assert.equal(res.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
+  const html = await res.text();
+  assert.deepEqual(calls, [[['22202', '22203'], '1.2.3.4']]);
+  assert.match(html, /n22202/);
+  assert.match(html, /noindex/);
+});
+
+test('home ?check: a throwing or over-budget watch still renders ids and the feed', async () => {
+  const boom = { ...fakeFeed(), watch() { throw new Error('db gone'); } };
+  const html = await (await handleRequest(new Request('https://example.com/?check=42'), { FEED: boom }, ctx)).text();
+  assert.match(html, /data-id="42"/);
+  assert.match(html, /id="feed-section"/);
+  const limited = { ...fakeFeed(), watch: () => null };
+  assert.match(await (await handleRequest(new Request('https://example.com/?check=42'), { FEED: limited }, ctx)).text(), /"watch":null/);
+  const none = { ...fakeFeed(), watch() { throw new Error('must not be called'); } };
+  assert.match(await (await handleRequest(new Request('https://example.com/'), { FEED: none }, ctx)).text(), /"list":\[\]/);
+});

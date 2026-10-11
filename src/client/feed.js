@@ -10,6 +10,8 @@ import {
   tempoPerMin, nextColumns, maxColumnsFor, pickColumn, shownColumns, foldQueue, TEMPO_WINDOW_MS, metaLine,
   PLAYER_SITES, STEAM_PROFILE, LOCK_PATH
 } from './feed-shared.js';
+import { markStar } from './title.js';
+import { watching, onFeedEntries, onWatchChange } from './watch.js';
 
 const ROW = 56;
 const IDLE_MS = 8000;
@@ -38,7 +40,6 @@ const qInput = $('feed-q');
 const hitsEl = $('feed-hits');
 const countEl = $('feed-count');
 const liveEl = $('feed-live');
-const baseTitle = document.title;
 
 const rows = new Map();   // steamId64 -> row element (row._e holds the entry)
 const latest = new Map(); // steamId64 -> newest known entry, shown or still queued
@@ -143,7 +144,7 @@ function lockBadge() {
 
 function makeRow(e) {
   const r = document.createElement('div');
-  r.className = 'fd-row';
+  r.className = watching(e.steamId64) ? 'fd-row fd-watched' : 'fd-row';
   r._e = e;
   const img = document.createElement('img');
   img.className = 'fd-av';
@@ -258,7 +259,7 @@ function flap(r) {
 
 function notifyPinned(r) {
   r.classList.add('fd-pinned');
-  if (document.hidden || !document.hasFocus()) document.title = '★ ' + baseTitle;
+  markStar();
 }
 
 function insert(e, animated) {
@@ -580,7 +581,6 @@ qInput.addEventListener('input', () => {
   else u.searchParams.delete('q');
   history.replaceState(null, '', u);
 });
-window.addEventListener('focus', () => { document.title = baseTitle; });
 
 // ---- data ----
 
@@ -590,6 +590,7 @@ function onData(data, isSnapshot) {
   hourCount = data.hourCount;
   renderCount();
   const entries = data.entries || [];
+  if (!isSnapshot) onFeedEntries(entries);
   if (isSnapshot && loaded) removeIds(idsToRemove(latest, entries));
   const fresh = diffEntries(entries, latest);
   fresh.forEach(e => latest.set(e.steamId64, e));
@@ -669,6 +670,8 @@ setInterval(() => {
   });
 }, 1000);
 setInterval(() => { if (loaded && !paused && !document.hidden) { trim(); layout(); retune(); } }, 15000);
+
+onWatchChange(() => rows.forEach(r => r.classList.toggle('fd-watched', watching(r._e.steamId64))));
 
 // The server pre-renders the rows and embeds the same snapshot: take it over
 // right away (identical markup, so nothing visibly changes), then go live.

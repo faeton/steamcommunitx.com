@@ -216,3 +216,36 @@ test('snapshot(): the same payload /api/recent.json serves', async () => {
   const body = await (await feed.handle(new Request('https://example.com/api/recent.json'))).json();
   assert.deepEqual(feed.snapshot(), body);
 });
+
+test('watch: 24 h status per Dota id in input order; read-only', async () => {
+  const { feed, clock } = makeFeed({ overrides: { [B]: null } });
+  feed.recordHit({ steamId64: A, ipHash: '1' });
+  feed.recordHit({ steamId64: B, ipHash: '2' });
+  await feed.tick();
+  clock.now += 3 * 60 * 60 * 1000; // off the one-hour board, still in the 24 h window
+  const w = feed.watch(['22204', '22203', '22202'], 'ip');
+  assert.equal(w.generatedAt, clock.now);
+  assert.deepEqual(w.items.map(i => [i.dotaId, i.steamId64, i.count, i.name]), [
+    ['22204', C, 0, null], ['22203', B, 1, null], ['22202', A, 1, 'name-30']
+  ]);
+  assert.equal(w.items[2].avatarHash, HASH);
+  assert.equal(feed.health().pending, 0); // asking never queues a Steam lookup
+});
+
+test('/api/check.json: parses ids, no-store, per-IP limit shared with watch()', async () => {
+  const { feed } = makeFeed();
+  feed.recordHit({ steamId64: A, ipHash: '1' });
+  const req = (q, ip = '9.9.9.9') => new Request(`https://example.com/api/check.json?ids=${q}`, { headers: { 'cf-connecting-ip': ip } });
+  const res = await feed.handle(req('22202,abc,76561197960287930'));
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('cache-control'), 'no-store');
+  const body = await res.json();
+  assert.deepEqual(body.items.map(i => [i.dotaId, i.count]), [['22202', 1]]);
+  assert.deepEqual((await (await feed.handle(req('junk'))).json()).items, []);
+  for (let i = 0; i < 58; i++) feed.watch(['1'], '9.9.9.9');
+  const limited = await feed.handle(req('22202'));
+  assert.equal(limited.status, 429);
+  assert.equal(limited.headers.get('retry-after'), '60');
+  assert.equal(feed.watch(['1'], '9.9.9.9'), null);
+  assert.equal((await feed.handle(req('22202', '8.8.8.8'))).status, 200);
+});

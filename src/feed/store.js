@@ -84,6 +84,13 @@ export class FeedStore {
       ),
       // Counts the same players the list shows (enriched and returned by Steam).
       hourCount: db.prepare('SELECT COUNT(DISTINCT c.steamid) AS n FROM checks c JOIN players p ON p.steamid = c.steamid WHERE c.ts >= ? AND p.found = 1'),
+      // Name, avatar and privacy only for players Steam actually returned.
+      status: db.prepare(
+        'SELECT (SELECT MAX(ts) FROM checks WHERE steamid = ?1 AND ts >= ?2) AS lastTs, ' +
+        '(SELECT COUNT(*) FROM checks WHERE steamid = ?1 AND ts >= ?2) AS count, ' +
+        'p.name AS name, p.avatar_hash AS avatarHash, p.private AS private ' +
+        'FROM (SELECT 1) LEFT JOIN players p ON p.steamid = ?1 AND p.found = 1'
+      ),
       seen: db.prepare('SELECT MAX(ts) AS lastTs, COUNT(*) AS count FROM checks WHERE steamid = ? AND ts >= ?'),
       purgeChecks: db.prepare('DELETE FROM checks WHERE ts < ?'),
       purgePlayers: db.prepare('DELETE FROM players WHERE fetched_at < ? AND steamid NOT IN (SELECT steamid FROM checks)'),
@@ -148,6 +155,16 @@ export class FeedStore {
   seen(steamId64, sinceTs) {
     const r = this.s.seen.get(steamId64, sinceTs);
     return r && r.count > 0 ? { lastTs: r.lastTs, count: r.count } : null;
+  }
+
+  checkStatus(steamIds, sinceTs) {
+    return steamIds.map(id => {
+      const r = this.s.status.get(id, sinceTs);
+      return {
+        steamId64: id, lastTs: r.lastTs ?? null, count: r.count,
+        name: r.name ?? null, avatarHash: r.avatarHash ?? null, private: r.private === 1
+      };
+    });
   }
 
   purge(now = this.clock()) {

@@ -1,5 +1,5 @@
 import { analyticsSnippet, resolveBanners, indexPage, errorPage, redirectPage, escapeHtml } from './pages.js';
-import { pickLang } from './client/feed-shared.js';
+import { pickLang, parseCheckList } from './client/feed-shared.js';
 
 // Helper functions for API key management
 export function getConfiguredApiKeys(env) {
@@ -289,11 +289,23 @@ export async function handleRequest(request, env, ctx) {
     if (env.FEED) {
       try { snapshot = env.FEED.snapshot(); } catch (e) { console.error("Feed snapshot failed:", e); }
     }
-    return new Response(indexPage(hostname, analytics, { feed: Boolean(env.FEED), lang, snapshot }), {
+    // Watchlist: the body depends only on the URL (no cookies), so the page
+    // stays safe to revalidate like any other.
+    const watchList = env.FEED ? parseCheckList(url.searchParams.getAll('check')) : [];
+    let watch = null;
+    if (watchList.length) {
+      try { watch = env.FEED.watch(watchList, request.headers.get('cf-connecting-ip') || ''); } catch (e) { console.error("Feed watch failed:", e); }
+    }
+    return new Response(indexPage(hostname, analytics, { feed: Boolean(env.FEED), lang, snapshot, watchList, watch }), {
       status: 200,
       // With the feed the page loads /assets modules that change on deploy, so
       // browsers revalidate instead of pairing an old page with new scripts.
-      headers: { 'Content-Type': 'text/html', 'Cache-Control': env.FEED ? 'no-cache' : 'max-age=3600' }
+      headers: {
+        'Content-Type': 'text/html',
+        'Cache-Control': env.FEED ? 'no-cache' : 'max-age=3600',
+        // A shared ?check link must not leak its ids to the sites we link to.
+        'Referrer-Policy': 'strict-origin-when-cross-origin'
+      }
     });
   }
   if (route.kind === 'missing-id') {

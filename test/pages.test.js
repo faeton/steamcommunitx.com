@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderTeaser, escapeHtml, renderFeedSection, errorPage } from '../src/pages.js';
+import { renderTeaser, escapeHtml, renderFeedSection, renderWatchBlock, errorPage, indexPage } from '../src/pages.js';
 
 const HASH = 'fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb';
 const NOW = 1_800_000_000_000;
@@ -67,4 +67,49 @@ test('errorPage: the title is text, never markup', () => {
   const html = errorPage('example.com', 500, '<img src=x onerror=alert(1)>', 'msg');
   assert.doesNotMatch(html, /<img src=x/);
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+});
+
+test('renderWatchBlock: rows in list order, escaped names, statuses, safe data island', () => {
+  const evil = '</script><img src=x onerror=alert(1)>';
+  const watch = { generatedAt: NOW, items: [
+    { dotaId: '22203', steamId64: '76561197960287931', lastTs: null, count: 0, name: null, avatarHash: null, private: false },
+    { dotaId: '22202', steamId64: '76561197960287930', lastTs: NOW - 2 * 3600_000, count: 3, name: evil, avatarHash: HASH, private: true }
+  ] };
+  const html = renderWatchBlock(['22203', '22202'], watch, 'en', NOW);
+  assert.doesNotMatch(html, /<section[^>]*hidden/);
+  const rows = html.match(/class="wt-row[^"]*" data-id="\d+"/g);
+  assert.deepEqual(rows.map(r => r.match(/data-id="(\d+)"/)[1]), ['22203', '22202']);
+  assert.match(html, /id 22203 · no checks recorded in 24 h/);
+  assert.match(html, /id 22202 · checked 2 h ago/);
+  assert.match(html, /<span class="fd-x">×3<\/span>/);
+  assert.match(html, />22203<\/a>/); // unknown player: the id stands in for the name
+  assert.doesNotMatch(html, /<img src=x/);
+  assert.equal((html.match(/class="fd-lock"/g) || []).length, 1);
+  assert.match(html, /href="https:\/\/www\.dotabuff\.com\/players\/22202"/);
+  const json = html.match(/<script type="application\/json" id="check-data">([\s\S]*?)<\/script>/)[1];
+  assert.doesNotMatch(json, /<\//);
+  const data = JSON.parse(json);
+  assert.deepEqual(data.list, ['22203', '22202']);
+  assert.equal(data.watch.items[1].name, evil);
+});
+
+test('renderWatchBlock: empty list shows the intro; a missing status still lists the ids', () => {
+  const empty = renderWatchBlock([], null, 'ru', NOW);
+  assert.match(empty, /class="wt wt-empty"/);
+  assert.match(empty, /Следи за своей командой/);
+  assert.match(empty, /"list":\[\]/);
+  const pending = renderWatchBlock(['42'], null, 'en', NOW);
+  assert.match(pending, /data-id="42"/);
+  assert.match(pending, /id 42<\/div>/);
+  assert.match(pending, /"watch":null/);
+});
+
+test('indexPage: watch block and noindex only with a check list', () => {
+  const withList = indexPage('example.com', '', { feed: true, lang: 'en', snapshot: null, watchList: ['42'], watch: null });
+  assert.match(withList, /id="watch"/);
+  assert.match(withList, /<meta name="robots" content="noindex">/);
+  const bare = indexPage('example.com', '', { feed: true, lang: 'en', snapshot: null });
+  assert.match(bare, /id="watch"/);
+  assert.doesNotMatch(bare, /noindex/);
+  assert.doesNotMatch(indexPage('example.com', '', {}), /id="watch"/);
 });

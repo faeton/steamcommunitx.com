@@ -45,7 +45,21 @@ const DICT = {
     teaserSeenOnce: 'This player was checked {ago} — see who else →',
     teaserSeenMany: 'This player was checked {ago} · ×{count} — see who else →',
     teaserHour: '{n} players checked this hour — see if you were →',
-    privateProfile: 'Private Steam profile'
+    privateProfile: 'Private Steam profile',
+    agoHour: '{n} h ago',
+    watchTitle: 'Watching',
+    watchHint: 'last 24 h · updates live',
+    watchIntro: 'Watch your team: add up to 10 Dota IDs and see when someone checks them. Share the link with teammates.',
+    watchPlaceholder: 'Dota ID, SteamID or profile link',
+    watchAdd: 'Add',
+    watchCopy: 'Copy link',
+    watchCopied: 'Copied',
+    watchClear: 'Clear',
+    watchRemove: 'Remove',
+    watchBell: 'Sound and notification on new checks',
+    watchChecked: 'checked {ago}',
+    watchNone: 'no checks recorded in 24 h',
+    watchNotify: '{name} was just checked'
   },
   ru: {
     feedTitle: 'Кого сейчас проверяют',
@@ -68,7 +82,21 @@ const DICT = {
     teaserSeenOnce: 'Этого игрока проверяли {ago} — посмотри, кого ещё →',
     teaserSeenMany: 'Этого игрока проверяли {ago} · ×{count} — посмотри, кого ещё →',
     teaserHour: 'Проверок за час: {n} — проверь, нет ли тебя →',
-    privateProfile: 'Приватный профиль Steam'
+    privateProfile: 'Приватный профиль Steam',
+    agoHour: '{n} ч назад',
+    watchTitle: 'Слежу',
+    watchHint: 'за 24 ч · обновляется вживую',
+    watchIntro: 'Следи за своей командой: добавь до 10 Dota ID и увидишь, когда их проверят. Скинь ссылку тиммейтам.',
+    watchPlaceholder: 'Dota ID, SteamID или ссылка на профиль',
+    watchAdd: 'Добавить',
+    watchCopy: 'Скопировать ссылку',
+    watchCopied: 'Скопировано',
+    watchClear: 'Очистить',
+    watchRemove: 'Убрать',
+    watchBell: 'Звук и уведомление о новых проверках',
+    watchChecked: 'проверяли {ago}',
+    watchNone: 'проверок за 24 ч не записано',
+    watchNotify: '{name} только что проверили'
   },
   uk: {
     feedTitle: 'Кого зараз перевіряють',
@@ -91,7 +119,21 @@ const DICT = {
     teaserSeenOnce: 'Цього гравця перевіряли {ago} — подивись, кого ще →',
     teaserSeenMany: 'Цього гравця перевіряли {ago} · ×{count} — подивись, кого ще →',
     teaserHour: 'Перевірок за годину: {n} — перевір, чи немає тебе →',
-    privateProfile: 'Приватний профіль Steam'
+    privateProfile: 'Приватний профіль Steam',
+    agoHour: '{n} год тому',
+    watchTitle: 'Стежу',
+    watchHint: 'за 24 год · оновлюється наживо',
+    watchIntro: 'Стеж за своєю командою: додай до 10 Dota ID і побачиш, коли їх перевірять. Скинь посилання тімейтам.',
+    watchPlaceholder: 'Dota ID, SteamID або посилання на профіль',
+    watchAdd: 'Додати',
+    watchCopy: 'Скопіювати посилання',
+    watchCopied: 'Скопійовано',
+    watchClear: 'Очистити',
+    watchRemove: 'Прибрати',
+    watchBell: 'Звук і сповіщення про нові перевірки',
+    watchChecked: 'перевіряли {ago}',
+    watchNone: 'перевірок за 24 год не записано',
+    watchNotify: '{name} щойно перевірили'
   }
 };
 
@@ -104,12 +146,19 @@ export function ago(lang, ts, now) {
   const s = Math.max(0, Math.round((now - ts) / 1000));
   if (s < 5) return t(lang, 'agoNow');
   if (s < 60) return t(lang, 'agoSec', { n: s });
-  return t(lang, 'agoMin', { n: Math.floor(s / 60) });
+  if (s < 3600) return t(lang, 'agoMin', { n: Math.floor(s / 60) });
+  return t(lang, 'agoHour', { n: Math.floor(s / 3600) });
 }
 
 // Second line of a feed row: the Dota account ID, then how long ago.
 export function metaLine(lang, entry, now) {
   return `id ${entry.dotaId} · ${ago(lang, entry.lastTs, now)}`;
+}
+
+// Second line of a watchlist row.
+export function watchMeta(lang, item, now) {
+  const status = item.lastTs == null ? t(lang, 'watchNone') : t(lang, 'watchChecked', { ago: ago(lang, item.lastTs, now) });
+  return `id ${item.dotaId} · ${status}`;
 }
 
 export function normalize(s) {
@@ -252,4 +301,60 @@ export function foldQueue(queue, cap) {
     if (isNewer(e, prev)) newest.set(e.steamId64, e);
   }
   return [...newest.values()].sort((a, b) => a.lastTs - b.lastTs).slice(-cap);
+}
+
+// ---- check watchlist (?check=) ----
+
+export const MAX_WATCH = 10;
+const MAX_CHECK_RAW = 1024;
+const STEAM64_BASE = 76561197960265728n;
+const ACCOUNT_LIMIT = 2n ** 32n;
+
+function tokenAccount(token) {
+  let s = token;
+  try { s = decodeURIComponent(s); } catch { /* malformed escape: use as is */ }
+  const steam3 = /^\[?U:1:(\d{1,10})\]?$/i.exec(s);
+  if (steam3) s = steam3[1];
+  const path = /\/(?:profiles|players)\/(\d+)(?:[/?#]|$)/.exec(s);
+  if (path) s = path[1];
+  let n;
+  if (/^\d{17}$/.test(s)) n = BigInt(s) - STEAM64_BASE;
+  else if (/^\d{1,10}$/.test(s)) n = BigInt(s);
+  else return null;
+  return n >= 1n && n < ACCOUNT_LIMIT ? n.toString() : null;
+}
+
+// Dota account ids (canonical decimal, deduplicated, input order, at most
+// MAX_WATCH) from a ?check value, a list of them, or pasted text. Only these
+// digits ever reach HTML, URLs or storage.
+export function parseCheckList(raw) {
+  const text = (Array.isArray(raw) ? raw.join(',') : String(raw ?? ''));
+  if (text.length > MAX_CHECK_RAW) return [];
+  const out = [];
+  for (const token of text.split(/[\s,+;]+/)) {
+    if (!token) continue;
+    const id = tokenAccount(token);
+    if (id && !out.includes(id)) out.push(id);
+    if (out.length === MAX_WATCH) break;
+  }
+  return out;
+}
+
+export function accountToSteamId64(account) {
+  return (STEAM64_BASE + BigInt(account)).toString();
+}
+
+// Ids from a fresh status poll whose latest check is newer than what was seen
+// before. An id without a baseline yet only gets one (adding never notifies).
+export function watchNews(baseline, items) {
+  return items.filter(it => {
+    const prev = baseline.get(it.dotaId);
+    return prev && it.lastTs != null && (prev.lastTs == null || it.lastTs > prev.lastTs);
+  }).map(it => it.dotaId);
+}
+
+// Tab title while the visitor is away: new watchlist checks, then the feed's
+// "a search match arrived" star.
+export function titleText(base, count, star) {
+  return (count > 0 ? `(${count}) ` : '') + (star ? '★ ' : '') + base;
 }

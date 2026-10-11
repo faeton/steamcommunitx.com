@@ -87,3 +87,24 @@ test('RateLimiter: fixed window per key', () => {
   clock.now = 60_000;
   assert.equal(rl.allow('x'), true);
 });
+
+test('FeedStore.checkStatus: per id in input order; names only for players Steam returned', () => {
+  const clock = clockAt(100_000_000);
+  const store = new FeedStore(openDb(':memory:'), clock);
+  const HASH = 'a'.repeat(40);
+  store.addCheck(A, clock() - 5000);
+  store.addCheck(A, clock() - 1000);
+  store.addCheck(A, clock() - 30 * 60 * 60 * 1000); // outside the window
+  store.addCheck(B, clock() - 2000);
+  store.completePending([A, B], [
+    { steamid: A, name: 'alpha', avatarHash: HASH, found: 1, private: 1, fetchedAt: clock() },
+    { steamid: B, name: 'hidden', avatarHash: HASH, found: 0, private: 0, fetchedAt: clock() }
+  ]);
+  const since = clock() - 24 * 60 * 60 * 1000;
+  assert.deepEqual(store.checkStatus([C, B, A], since), [
+    { steamId64: C, lastTs: null, count: 0, name: null, avatarHash: null, private: false },
+    { steamId64: B, lastTs: clock() - 2000, count: 1, name: null, avatarHash: null, private: false },
+    { steamId64: A, lastTs: clock() - 1000, count: 2, name: 'alpha', avatarHash: HASH, private: true }
+  ]);
+  assert.deepEqual(store.checkStatus([], since), []);
+});
