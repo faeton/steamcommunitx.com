@@ -99,6 +99,11 @@ export function ago(lang, ts, now) {
   return t(lang, 'agoMin', { n: Math.floor(s / 60) });
 }
 
+// Second line of a feed row: the Dota account ID, then how long ago.
+export function metaLine(lang, entry, now) {
+  return `id ${entry.dotaId} · ${ago(lang, entry.lastTs, now)}`;
+}
+
 export function normalize(s) {
   return String(s ?? '').normalize('NFKC').toLowerCase();
 }

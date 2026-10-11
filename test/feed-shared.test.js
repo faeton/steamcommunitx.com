@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   avatarUrl, pickLang, t, ago, splitTerms, matchesTerms, highlightRanges,
   timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, isStale, insertIndex,
-  tempoPerMin, nextColumns, maxColumnsFor, pickColumn
+  tempoPerMin, nextColumns, maxColumnsFor, pickColumn, metaLine
 } from '../src/client/feed-shared.js';
 
 const HASH = 'fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb';
@@ -141,4 +141,10 @@ test('pickColumn: the column that changed longest ago, lowest index on ties', ()
   assert.equal(pickColumn([300, 100, 200]), 1);
   assert.equal(pickColumn([0, 0, 0]), 0);
   assert.equal(pickColumn([5]), 0);
+});
+
+test('metaLine: Dota ID before the relative time', () => {
+  const now = 1_000_000;
+  assert.equal(metaLine('en', { dotaId: '123123123', lastTs: now - 5000 }, now), 'id 123123123 · 5s ago');
+  assert.equal(metaLine('ru', { dotaId: '22202', lastTs: now - 240_000 }, now), 'id 22202 · 4 мин назад');
 });

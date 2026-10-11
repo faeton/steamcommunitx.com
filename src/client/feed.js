@@ -5,9 +5,9 @@
 // browser APIs (Element.animate, getAnimations) are feature-checked because
 // the Dota in-game browser runs an older Chromium.
 import {
-  t, ago, pickLang, avatarUrl, splitTerms, matchesTerms, highlightRanges,
+  t, pickLang, avatarUrl, splitTerms, matchesTerms, highlightRanges,
   timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, isStale, insertIndex, HOUR_MS,
-  tempoPerMin, nextColumns, maxColumnsFor, pickColumn, TEMPO_WINDOW_MS
+  tempoPerMin, nextColumns, maxColumnsFor, pickColumn, TEMPO_WINDOW_MS, metaLine
 } from './feed-shared.js';
 
 const ROW = 56;
@@ -115,7 +115,7 @@ function paint(r) {
   }
   nodes.push(e.name.slice(pos));
   setNick(r, nodes);
-  r._meta.textContent = ago(lang, e.lastTs, Date.now());
+  r._meta.textContent = metaLine(lang, e, Date.now());
   r.hidden = !matchesTerms(e.name, terms);
   if (r.isConnected && !r.hidden) fitName(r);
 }
@@ -612,7 +612,7 @@ setInterval(() => {
   const now = Date.now();
   rows.forEach(r => {
     if (r.hidden) return;
-    const text = ago(lang, r._e.lastTs, now);
+    const text = metaLine(lang, r._e, now);
     if (r._meta.textContent !== text) r._meta.textContent = text;
   });
 }, 1000);
