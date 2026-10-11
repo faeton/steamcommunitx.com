@@ -339,3 +339,15 @@ test('home with feed: a throwing snapshot still renders the page', async () => {
   assert.equal(res.status, 200);
   assert.match(await res.text(), /id="feed-section"/);
 });
+
+test('parseRoute: a single unknown segment is a 404, not a redirect to Dotabuff', () => {
+  assert.deepEqual(parseRoute('/nope'), { kind: 'unknown', linktype: 'nope', linkid: undefined });
+  assert.deepEqual(parseRoute('/robots.txt'), { kind: 'unknown', linktype: 'robots.txt', linkid: undefined });
+  assert.deepEqual(parseRoute('/id'), { kind: 'redirect-base' });
+});
+
+test('handleRequest: /nope renders the 404 page', async () => {
+  const res = await handleRequest(new Request('https://example.com/nope'), {}, ctx);
+  assert.equal(res.status, 404);
+  assert.match(await res.text(), /Not Found/);
+});

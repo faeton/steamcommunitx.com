@@ -244,10 +244,12 @@ export function parseRoute(pathname) {
   // /screenshots, ...). Only the first segment after the linktype is the
   // vanity/ID — ignore anything after it so those URLs still resolve.
   const [, linktype, rawId] = cleanPath.split('/');
-  if (!linktype || !rawId) return { kind: 'redirect-base' };
+  // Only /id/… and /profiles/… are Steam profile paths; anything else is a 404
+  // rather than a blind redirect to Dotabuff.
   if (linktype !== 'id' && linktype !== 'profiles') {
     return { kind: 'unknown', linktype, linkid: rawId };
   }
+  if (!rawId) return { kind: 'redirect-base' };
   let value;
   try {
     value = decodeURIComponent(rawId);
