@@ -7,16 +7,16 @@ This service converts Steam Vanity URLs and SteamID-based profile URLs into Dota
 - **Supports Steam Vanity URLs** (e.g., `steamcommunity.com/id/gabelogannewell` → API resolution required)
 - **Handles SteamID-based URLs locally** (e.g., `steamcommunity.com/profiles/76561197960287930` → converted without API)
 - **Automatic Redirects** to Dotabuff player profiles
-- **Google Analytics Integration** (ensuring tracking before redirection)
-- **Cloudflare Workers Optimization**
-- **Secure API Key Handling** using Cloudflare Worker Secrets
+- **Analytics**: Google Analytics and/or Matomo on every page, configured through secrets/env
+- **Two runtimes**: a Cloudflare Worker, or a self-hosted Node server (Docker image provided) sharing the same request handler
+- **Secure API key handling**: Steam keys live in Worker secrets or the server's `.env`, with rotation across several keys and health tracking
 - **Recent checks feed** (self-hosted only): live list of recently checked players on the home page, plus a teaser on the redirect page
 
 ## How It Works
 1. **Vanity URLs**: If a user enters a Steam Vanity URL (`/id/{username}`), the service queries the Steam API to resolve the corresponding SteamID64.
 2. **SteamID64 URLs**: If a user enters a `/profiles/{SteamID64}`, the system locally converts it to a Dota 2 Player ID.
 3. **Steam3 IDs**: If the URL contains a Steam3 ID format (e.g., `[U:1:22202]`), it is converted directly without API usage.
-4. **Google Analytics**: The redirect page ensures Google Analytics tracking before sending the user to Dotabuff.
+4. **Redirect page**: a short interstitial loads analytics, then sends the visitor to Dotabuff after 1 second (5 seconds when the optional banner is shown, at most once per hour). With JavaScript off, a `<noscript>` meta refresh does the same.
 
 ## URL Usage
 - **Vanity Name URL:** `https://steamcommunitx.com/id/{username}` (Requires API resolution)
@@ -27,6 +27,8 @@ All formats redirect to Dotabuff:
 ```
 https://www.dotabuff.com/players/{dotaID}
 ```
+
+Anything after the ID (`/inventory`, `/games`, …) is ignored, and the link type is case-insensitive. `/id` or `/profiles` without a player shows a 404 page explaining these formats; any other path is a plain 404.
 
 ## Setup & Deployment
 ### 1. Deploy to Cloudflare Workers
@@ -84,10 +86,10 @@ To use a custom domain like `steamcommunitx.com`, configure Cloudflare DNS setti
 
 > The original 2017 PHP prototype is preserved on the [`legacy-php-2017`](https://github.com/faeton/steamcommunitx.com/tree/legacy-php-2017) branch for historical reference.
 
-### Optimized Redirect Logic
-- Uses `window.onload` to ensure all tracking scripts load before redirecting.
-- Redirects both SteamID-based URLs and Vanity URLs to Dotabuff.
-- Implements proper error handling for missing API keys and invalid Steam IDs.
+### Redirect logic
+- One request handler (`handleRequest` in `src/core.js`) serves both runtimes.
+- SteamID64 and SteamID3 are converted locally; vanity names are resolved through `ISteamUser/ResolveVanityURL` and cached for 30 days. An unknown vanity name is a 404 right away.
+- Missing keys, rate limits (429 with `Retry-After`) and Steam outages get their own error pages; on the Node server `/healthz` reports Steam API health too.
 
 ## Self-hosting (Node / Docker)
 
@@ -114,11 +116,19 @@ A Worker route on the zone takes precedence over the origin. `wrangler.toml` del
 
 ## Recent checks feed (optional, self-hosted only)
 
-When the server runs with `FEED_ENABLED=1` (default), every real-browser redirect records a *check* of that profile (link-preview bots and crawlers are ignored). Every 30 seconds the queued SteamIDs are enriched with nickname and avatar via `ISteamUser/GetPlayerSummaries` (up to 100 per call, cached for 6 hours). The home page then shows a live list of players checked in the last hour, and the redirect page shows a one-line teaser.
+When the server runs with `FEED_ENABLED=1` (default), every real-browser redirect records a *check* of that profile (link-preview bots and crawlers are ignored). Every 30 seconds the queued SteamIDs are enriched with nickname and avatar via `ISteamUser/GetPlayerSummaries` (up to 100 per call, cached for 6 hours). The home page then shows a live list of players checked in the last hour, and the redirect page shows a one-line teaser ("this player was checked 4 min ago" or "132 players checked this hour").
+
+The home list:
+- is rendered on the server, so it is there on first paint, then updated live over Server-Sent Events (polling as a fallback);
+- reveals new players one at a time with a split-flap animation, grouped into *Just now / Last 5 min / Last hour*;
+- splits into two or three independent reels when checks arrive fast (Battle Cup evenings), and back to one when it calms down;
+- can be "caught": hovering or scrolling pauses it, and it releases after a few seconds idle or when scrolled back to the top;
+- filters by any word of a nickname, or by a Dota ID / SteamID64 (a bare ID, a pasted profile URL or `[U:1:x]` all work);
+- links the nickname to the Steam profile and has D / O / S tiles for Dotabuff, OpenDota and STRATZ; each row shows the Dota ID and how long ago it was checked.
 
 Privacy and moderation:
 - Only the **checked profile** is shown, never who checked it. IP addresses are never stored (rate limiting uses a daily-salted hash kept in memory).
-- Only public Steam data is shown: persona name and avatar. Steam publishes these even for private profiles, so private profiles are listed too, marked with a small lock. Accounts Steam does not return (deleted or invalid) are never shown.
+- Only public Steam data is shown: persona name and avatar. Steam publishes these even for private profiles, so private profiles are listed too, marked with a small lock. Accounts Steam does not know are never shown; a known player Steam temporarily omits keeps its last name and avatar.
 - Raw checks are kept for 24 hours, player names/avatars for 7 days after the last check.
 - Nicknames are cleaned (control/bidi characters, excessive combining marks, length) and words listed in `BLOCKED_WORDS_FILE` are masked. After editing the file, send `SIGHUP` (`docker kill -s HUP <container>`); new and refreshed names use the new list.
 

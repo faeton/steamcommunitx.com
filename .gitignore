@@ -7,3 +7,6 @@ node_modules/
 .impeccable/
 data/
 docker-compose.yml
+
+# Design specs and implementation plans: local development notes, not published
+docs/superpowers/
