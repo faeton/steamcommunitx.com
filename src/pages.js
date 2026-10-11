@@ -1,4 +1,4 @@
-import { t, ago, avatarUrl, timeBlock, metaLine, DOTABUFF_PLAYER, STEAM_PROFILE, LOCK_PATH } from './client/feed-shared.js';
+import { t, ago, avatarUrl, timeBlock, metaLine, PLAYER_SITES, STEAM_PROFILE, LOCK_PATH } from './client/feed-shared.js';
 
 export function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -105,7 +105,10 @@ function feedRow(e, lang, now) {
   return `<div class="fd-row"><span class="fd-avw"><img class="fd-av" alt="" width="36" height="36" decoding="async"${src ? ` src="${src}"` : ''}>${lock}</span>` +
     `<div class="fd-who"><div class="fd-nick"><a class="fd-name" href="${STEAM_PROFILE}${steamId64}" title="${name}">${name}</a>${badge}</div>` +
     `<div class="fd-meta">${escapeHtml(metaLine(lang, { ...e, dotaId }, now))}</div></div>` +
-    `<a class="fd-go" href="${DOTABUFF_PLAYER}${dotaId}" title="${escapeHtml(t(lang, 'dotabuff'))}" aria-label="${escapeHtml(t(lang, 'dotabuff') + ': ' + e.name)}">D</a></div>`;
+    `<span class="fd-links">${PLAYER_SITES.map(p => {
+      const label = t(lang, 'openOn', { site: p.site });
+      return `<a class="fd-go fd-go-${p.key}" href="${p.url}${dotaId}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label + ': ' + e.name)}">${p.label}</a>`;
+    }).join('')}</span></div>`;
 }
 
 export function renderFeedSection(snapshot, lang = 'en', now = Date.now()) {
@@ -189,15 +192,20 @@ const FEED_CSS = `
     .fd-nick mark, .fd-flap.fd-hl { background: rgba(102,192,244,0.25); color: var(--text); border-radius: 3px; }
     .fd-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .fd-x { font-size: 11px; font-weight: 700; color: var(--gold); background: rgba(245,196,81,0.12); border-radius: 6px; padding: 1px 6px; margin-left: 6px; flex: none; }
-    /* Small "D" tile linking to Dotabuff: fits even three columns. */
+    /* Letter tiles for the stats sites, in each site's own logo colours. */
+    .fd-links { flex: none; display: flex; gap: 5px; }
     .fd-go {
-      flex: none; width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center;
-      background: var(--db-red); color: #fff;
+      width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; box-sizing: border-box;
       font-size: 14px; font-weight: 800; line-height: 1; text-decoration: none;
-      transition: background .15s, transform .15s;
+      transition: filter .15s, transform .15s;
     }
-    .fd-go:hover, .fd-go:focus-visible { background: var(--db-red-hi); color: #fff; text-decoration: none; transform: scale(1.08); }
+    .fd-go:hover, .fd-go:focus-visible { text-decoration: none; transform: scale(1.08); filter: brightness(1.15); }
     .fd-go:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+    .fd-go-d { background: #c23c2a; color: #fff; }                          /* Dotabuff red */
+    .fd-go-o { background: #00c59e; color: #000; }                          /* OpenDota green on black */
+    .fd-go-s { background: #000; color: #0bb0d0; border: 1px solid #0bb0d0; } /* STRATZ cyan on black */
+    .fd-multi .fd-links { gap: 3px; }
+    .fd-multi .fd-go { width: 21px; height: 21px; border-radius: 6px; font-size: 12px; }
     .fd-empty { padding: 24px 16px; color: var(--muted); text-align: center; font-size: 14px; }
     .fd-flap { display: inline-block; position: relative; white-space: pre; }
     .fd-flap.spin { clip-path: inset(0); } /* random glyphs stay inside their cell; unlike overflow, keeps the baseline */
@@ -254,8 +262,6 @@ export function indexPage(hostname, analytics = '', opts = {}) {
       --accent: #66c0f4;
       --accent-2: #4aa3d9;
       --gold: #f5c451;
-      --db-red: #c23c2a;      /* Dotabuff's brand red, for the D tile */
-      --db-red-hi: #de4a35;
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; }

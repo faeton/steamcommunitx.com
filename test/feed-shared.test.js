@@ -28,6 +28,7 @@ test('t: interpolates and falls back to English', () => {
   assert.equal(t('ru', 'hits', { n: 3 }), 'совпадений: 3');
   assert.equal(t('xx', 'live'), 'Live');
   assert.equal(t('uk', 'privateProfile'), 'Приватний профіль Steam');
+  assert.equal(t('ru', 'openOn', { site: 'STRATZ' }), 'Открыть на STRATZ');
 });
 
 test('ago: seconds and minutes per language', () => {

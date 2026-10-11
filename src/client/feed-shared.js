@@ -3,7 +3,12 @@
 
 export const AVATAR_HASH_RE = /^[0-9a-f]{40}$/;
 export const HOUR_MS = 60 * 60 * 1000;
-export const DOTABUFF_PLAYER = 'https://www.dotabuff.com/players/';
+// Stats sites linked from every feed row, as small letter tiles.
+export const PLAYER_SITES = [
+  { key: 'd', label: 'D', site: 'Dotabuff', url: 'https://www.dotabuff.com/players/' },
+  { key: 'o', label: 'O', site: 'OpenDota', url: 'https://www.opendota.com/players/' },
+  { key: 's', label: 'S', site: 'STRATZ', url: 'https://stratz.com/players/' }
+];
 export const STEAM_PROFILE = 'https://steamcommunity.com/profiles/';
 export const LOCK_PATH = 'M4 7V5a4 4 0 1 1 8 0v2h1v8H3V7h1zm2 0h4V5a2 2 0 1 0-4 0v2z';
 
@@ -33,7 +38,7 @@ const DICT = {
     pillHover: '⏸ Paused while hovering',
     pill: '⏸ Paused · back to live ↑',
     empty: 'Nobody checked in the last hour yet.',
-    dotabuff: 'Open on Dotabuff',
+    openOn: 'Open on {site}',
     agoNow: 'just now',
     agoSec: '{n}s ago',
     agoMin: '{n} min ago',
@@ -56,7 +61,7 @@ const DICT = {
     pillHover: '⏸ Пауза, пока курсор на ленте',
     pill: '⏸ Пауза · к live ↑',
     empty: 'За последний час никого не проверяли.',
-    dotabuff: 'Открыть на Dotabuff',
+    openOn: 'Открыть на {site}',
     agoNow: 'только что',
     agoSec: '{n} сек назад',
     agoMin: '{n} мин назад',
@@ -79,7 +84,7 @@ const DICT = {
     pillHover: '⏸ Пауза, поки курсор на стрічці',
     pill: '⏸ Пауза · до live ↑',
     empty: 'За останню годину нікого не перевіряли.',
-    dotabuff: 'Відкрити на Dotabuff',
+    openOn: 'Відкрити на {site}',
     agoNow: 'щойно',
     agoSec: '{n} с тому',
     agoMin: '{n} хв тому',

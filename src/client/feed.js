@@ -8,7 +8,7 @@ import {
   t, pickLang, avatarUrl, splitTerms, matchesEntry, highlightRanges,
   timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, isStale, insertIndex, HOUR_MS,
   tempoPerMin, nextColumns, maxColumnsFor, pickColumn, TEMPO_WINDOW_MS, metaLine,
-  DOTABUFF_PLAYER, STEAM_PROFILE, LOCK_PATH
+  PLAYER_SITES, STEAM_PROFILE, LOCK_PATH
 } from './feed-shared.js';
 
 const ROW = 56;
@@ -168,15 +168,20 @@ function makeRow(e) {
   r._meta = document.createElement('div');
   r._meta.className = 'fd-meta';
   who.append(r._nick, r._meta);
-  // Only the small "D" tile is a link: a tap elsewhere on the row just
-  // catches the feed (important on phones).
-  const go = document.createElement('a');
-  go.className = 'fd-go';
-  go.href = DOTABUFF_PLAYER + encodeURIComponent(e.dotaId);
-  go.title = t(lang, 'dotabuff');
-  go.setAttribute('aria-label', t(lang, 'dotabuff') + ': ' + e.name);
-  go.textContent = 'D';
-  r.append(av, who, go);
+  // Links are the nickname and the small site tiles only: a tap elsewhere on
+  // the row just catches the feed (important on phones).
+  const links = document.createElement('span');
+  links.className = 'fd-links';
+  for (const p of PLAYER_SITES) {
+    const go = document.createElement('a');
+    go.className = 'fd-go fd-go-' + p.key;
+    go.href = p.url + encodeURIComponent(e.dotaId);
+    go.title = t(lang, 'openOn', { site: p.site });
+    go.setAttribute('aria-label', go.title + ': ' + e.name);
+    go.textContent = p.label;
+    links.append(go);
+  }
+  r.append(av, who, links);
   paint(r);
   return r;
 }
