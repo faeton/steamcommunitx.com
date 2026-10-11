@@ -24,3 +24,6 @@ All notable changes to this project are documented here. The format is based on
   a thin adapter. Worker behaviour is unchanged.
 - The redirect page's meta-refresh fallback now lives in `<noscript>`; with
   JavaScript the redirect is driven by the script timer only.
+- `wrangler.toml` no longer declares the domain route: `wrangler deploy` only
+  uploads the Worker, and switching the domain to it takes an explicit
+  `--routes` flag. CI runs on Node 24.

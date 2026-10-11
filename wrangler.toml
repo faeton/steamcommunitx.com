@@ -2,9 +2,12 @@ name = "steamcommunitx"
 main = "worker.js"
 compatibility_date = "2026-05-09"
 
-routes = [
-  { pattern = "steamcommunitx.com/*", zone_name = "steamcommunitx.com" }
-]
+# No routes on purpose: the site is served by the self-hosted Node server, and
+# a plain `wrangler deploy` must not take the domain back. Deploying only
+# uploads the Worker code. To switch the domain back to the Worker (rollback),
+# name the route explicitly:
+#   npx wrangler deploy --routes "steamcommunitx.com/*"
+workers_dev = false
 
 # BANNERS, MATOMO_URL and MATOMO_SITE_ID are supplied as secrets
 # (`wrangler secret put ...`) so a deployment keeps them out of this repo.

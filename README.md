@@ -106,7 +106,11 @@ Without Docker: `npm start` (reads the same variables from the environment).
 
 ### Switching between the Worker and the server
 
-A Worker route on the zone takes precedence over the origin. To serve the site from the self-hosted server, remove the Worker route (Workers & Pages → the worker → Settings → Domains & Routes). **Rolling back is `wrangler deploy`**, which re-creates the route from `wrangler.toml` — note that any Worker deploy does this, so deploy the Worker only when you intend to switch back. The Worker runs without the feed; everything else is identical.
+A Worker route on the zone takes precedence over the origin. `wrangler.toml` deliberately declares **no routes**, so `wrangler deploy` only uploads the Worker code and never takes the domain away from the server by accident.
+
+- **Serve from the self-hosted server:** remove the Worker route (Workers & Pages → the worker → Settings → Domains & Routes) and point the proxied DNS record at the server.
+- **Serve from the Worker (or roll back):** `npx wrangler deploy --routes "example.com/*"` — the explicit route is the switch. The Worker runs without the feed; everything else is identical.
+- If the Worker is connected to Cloudflare Workers Builds (git auto-deploy), keep in mind that a build with a route configured has the same effect.
 
 ## Recent checks feed (optional, self-hosted only)
 
