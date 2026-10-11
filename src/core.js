@@ -1,0 +1,280 @@
+import { analyticsSnippet, resolveBanners, indexPage, errorPage, redirectPage } from './pages.js';
+
+// Helper functions for API key management
+export function getConfiguredApiKeys(env) {
+  const primaryKey = env.STEAM_API_KEY;
+  const multiKeys = env.STEAM_API_KEYS ? env.STEAM_API_KEYS.split(',') : [];
+  const allKeys = primaryKey ? [primaryKey, ...multiKeys] : multiKeys;
+  return [...new Set(allKeys.map(k => (k || '').trim()).filter(Boolean))];
+}
+
+export async function getAvailableApiKeys(env) {
+  const keys = getConfiguredApiKeys(env);
+  if (!env.API_KEY_STATUS || keys.length <= 1) return keys;
+  const statuses = await Promise.all(keys.map(async k => {
+    const [invalid, ratelimited] = await Promise.all([
+      env.API_KEY_STATUS.get(`key:${k}:invalid`),
+      env.API_KEY_STATUS.get(`key:${k}:ratelimited`)
+    ]);
+    return { key: k, healthy: !invalid && !ratelimited };
+  }));
+  const healthy = statuses.filter(s => s.healthy).map(s => s.key);
+  return healthy.length ? healthy : keys;
+}
+
+function maskApiKey(key) {
+  if (!key) return 'undefined';
+  return key.substring(0, 4) + '...' + key.slice(-4);
+}
+
+export async function markProblemKey(env, key) {
+  if (!env.API_KEY_STATUS) return;
+  try {
+    await env.API_KEY_STATUS.put(`key:${key}:invalid`, 'true', { expirationTtl: 24 * 60 * 60 });
+    console.log(`Marked key ${maskApiKey(key)} as problematic for 24 hours`);
+  } catch (e) {
+    console.error("Error marking problem key:", e);
+  }
+}
+
+export async function markRateLimitedKey(env, key, retryAfter) {
+  if (!env.API_KEY_STATUS) return;
+  try {
+    const expirationSecs = Math.min(retryAfter + 30, 3600);
+    await env.API_KEY_STATUS.put(`key:${key}:ratelimited`, 'true', { expirationTtl: expirationSecs });
+    console.log(`Marked key ${maskApiKey(key)} as rate-limited for ${expirationSecs} seconds`);
+  } catch (e) {
+    console.error("Error marking rate-limited key:", e);
+  }
+}
+
+export async function markWorkingKey(env, key) {
+  if (!env.API_KEY_STATUS) return;
+  try {
+    await env.API_KEY_STATUS.delete(`key:${key}:invalid`);
+    await env.API_KEY_STATUS.delete(`key:${key}:ratelimited`);
+    await env.API_KEY_STATUS.put(`key:${key}:lastSuccess`, Date.now().toString());
+  } catch (e) {
+    console.error("Error marking working key:", e);
+  }
+}
+
+// Steam favicon data URI (16x16 pixel steam icon) in base64 format
+const FAVICON_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABGdBTUEAALGPC/xhBQAAAAlwSFlzAAAOwQAADsEBuJFr7QAAABh0RVh0U29mdHdhcmUAcGFpbnQubmV0IDQuMS40E0BoxAAAAi5JREFUOE+Nk11IU2EYx895z5xp5XTPkRZEaLSQRKIvg2BdjOqqusygi4igDxKCIKjQ6iYJvCgqoC4yCJVVRLYuKgJjRhIjknTZrJbbdOtnTve8x/ectzMbSREd+PG+7/Oe33/P4YwAgJXq+7L00tLGO5IktXs8HsXv93N0JG7bNlKpFGKxmDE3N7e7vq16JuobYSa7jBv5hH9IpVlZWbGDwaBcLBZFOI0LBoOSYzX9jeUQe+V2u+njPYVCQaGDMFEUuWg0yjnneNI/OQgrrA8pn5+f53a7jVIbE8bIssznYuOdnP3rXsP1UMkXicOKshSLxar5lfwQnx6wSQghaHVzc9MhgZJ1aGB8jx40Pmj/8K1nQdO0DKiZXQIpODo6Wp0XoSFd13VmGAY1MNbW1g5Isy9qVsLSLZLUQdp40DLgQXu329vbTSG1ShBDT7+7rl7Wh+TJcbbf1+YNXzQO+WBgwPuhrVB8Xry9P9nU1LQjSIqibE+n00J++OFgw+ztdX6fnfvt7+rlJ8N8crI7YVlWlCRCnQoC4P11a54f8l4oG7Ihi2VjyftLIhfh0+3HzlfMqNVqxQlXBcoUaPgpfT3+4nxDLPyyOWLJXR+fHu8M66YRJIIcwv8EbFVeWhvXwmeDnVHpTnBKGy1ySwQZRRgpCb5Pd+5/o6jLR3lc4T7a1mWiD5IBl8sFWZYhCALVxiZMJdlsljGhJEHXC0X+mIqJ7Krt1P8LI6/EBYk0I1UAAAAASUVORK5CYII=";
+
+const base = "https://www.dotabuff.com/";
+
+async function getId(vanityUrl, env) {
+  const normalizedVanity = vanityUrl.toLowerCase().trim();
+  const cacheKey = `steamid:${normalizedVanity}`;
+  try {
+    if (env.STEAM_ID_CACHE) {
+      const cachedId = await env.STEAM_ID_CACHE.get(cacheKey);
+      if (cachedId) {
+        console.log(`Cache hit for ${normalizedVanity}`);
+        return cachedId;
+      }
+    }
+  } catch (e) {
+    console.error("Cache read error:", e);
+  }
+  const apiKeys = await getAvailableApiKeys(env);
+  if (!apiKeys || apiKeys.length === 0) {
+    throw { status: 503, message: "Steam API service unavailable - No API keys configured" };
+  }
+  const fetchWithRetry = async (retries = 2, backoff = 1000, keyIndex = 0) => {
+    if (keyIndex >= apiKeys.length) {
+      keyIndex = 0;
+      backoff = backoff * 2;
+    }
+    const apiKey = apiKeys[keyIndex];
+    const url = `https://api.steampowered.com/ISteamUser/ResolveVanityURL/v0001/?key=${encodeURIComponent(apiKey)}&vanityurl=${encodeURIComponent(normalizedVanity)}`;
+    console.log(`Trying API request with key index ${keyIndex}`);
+    try {
+      const response = await fetch(url, {
+        headers: {
+          "content-type": "application/json;charset=UTF-8",
+          ...(retries < 2 && keyIndex === 0 ? { "Cache-Control": "no-cache" } : {})
+        },
+        cf: { cacheTtl: 3600 }
+      });
+      if (response.status === 401 || response.status === 403) {
+        console.error(`API key ${maskApiKey(apiKey)} appears to be invalid (${response.status})`);
+        await markProblemKey(env, apiKey);
+        if (keyIndex + 1 < apiKeys.length) {
+          console.log(`Trying next API key (index ${keyIndex + 1})`);
+          return fetchWithRetry(retries, backoff, keyIndex + 1);
+        }
+      }
+      if (response.status === 429) {
+        const retryAfter = parseInt(response.headers.get('Retry-After') || '300');
+        console.log(`Steam API rate limited with key ${maskApiKey(apiKey)}. Retry after ${retryAfter}s`);
+        await markRateLimitedKey(env, apiKey, retryAfter);
+        if (keyIndex + 1 < apiKeys.length) {
+          console.log(`Switching to next API key (index ${keyIndex + 1})`);
+          return fetchWithRetry(retries, backoff, keyIndex + 1);
+        }
+        if (retries > 0) {
+          const waitTime = Math.min(5000, retryAfter * 1000);
+          console.log(`Waiting ${waitTime}ms before retry. Retries left: ${retries}`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          return fetchWithRetry(retries - 1, backoff * 2, 0);
+        }
+        throw { status: 429, message: "All Steam API keys are rate limited", retryAfter };
+      }
+      if (!response.ok) {
+        throw new Error(`Steam API error: ${response.statusText} (${response.status})`);
+      }
+      const data = await response.json();
+      if (data?.response?.success !== 1) {
+        console.log(`API returned unsuccessful response: ${JSON.stringify(data.response)}`);
+        throw new Error(`Steam API returned unsuccessful response: ${data?.response?.message || 'Unknown error'}`);
+      }
+      const steamId = data?.response?.steamid;
+      if (!steamId) {
+        console.log(`No Steam ID found for vanity URL: ${normalizedVanity}`);
+        return null;
+      }
+      if (env.STEAM_ID_CACHE) {
+        try {
+          const oneMonthInSeconds = 30 * 24 * 60 * 60;
+          await env.STEAM_ID_CACHE.put(cacheKey, steamId, { expirationTtl: oneMonthInSeconds });
+          console.log(`Cached ${normalizedVanity} -> ${steamId} for 30 days`);
+        } catch (e) {
+          console.error("Cache write error:", e);
+        }
+      }
+      await markWorkingKey(env, apiKey);
+      return steamId;
+    } catch (error) {
+      if (error.status) throw error;
+      console.error(`Error with API key ${maskApiKey(apiKey)}:`, error.message);
+      if (keyIndex + 1 < apiKeys.length) {
+        console.log(`Trying next API key (index ${keyIndex + 1}) after error`);
+        return fetchWithRetry(retries, backoff, keyIndex + 1);
+      }
+      if (retries > 0) {
+        console.log(`General error, retrying. Retries left: ${retries}`);
+        await new Promise(resolve => setTimeout(resolve, backoff));
+        return fetchWithRetry(retries - 1, backoff * 2, 0);
+      }
+      throw { status: 500, message: "Failed to fetch Steam ID after multiple attempts" };
+    }
+  };
+  return fetchWithRetry();
+}
+
+export function convertToDota2Id(steamId) {
+  const cleanId = steamId.trim();
+  if (/^\[U:1:\d+\]$/.test(cleanId)) {
+    const match = cleanId.match(/\[U:1:(\d+)\]/);
+    if (match && match[1]) return match[1];
+  }
+  if (/^\d{17}$/.test(cleanId)) {
+    try {
+      return (BigInt(cleanId) - BigInt("76561197960265728")).toString();
+    } catch (e) {
+      console.error(`Error converting SteamID64: ${cleanId}`, e);
+      return null;
+    }
+  }
+  const rawSteamId3Match = cleanId.match(/^U:1:(\d+)$/i);
+  if (rawSteamId3Match && rawSteamId3Match[1]) return rawSteamId3Match[1];
+  console.error(`Failed to convert Steam ID: ${steamId} (cleaned: ${cleanId})`);
+  return null;
+}
+
+// Pure router: classifies a request pathname.
+// Returns one of:
+//   { kind: 'favicon' }
+//   { kind: 'home' }
+//   { kind: 'redirect-base' }              — empty linktype/linkid
+//   { kind: 'unknown', linktype, linkid }  — linktype not in whitelist
+//   { kind: 'id' | 'profiles', value }     — recognized route, value is decoded
+export function parseRoute(pathname) {
+  if (pathname === '/favicon.ico') return { kind: 'favicon' };
+  if (pathname === '/') return { kind: 'home' };
+  const cleanPath = pathname.replace(/\/+$/, '');
+  // Steam profile URLs often carry a subpath (/inventory, /games, /friends,
+  // /screenshots, ...). Only the first segment after the linktype is the
+  // vanity/ID — ignore anything after it so those URLs still resolve.
+  const [, linktype, rawId] = cleanPath.split('/');
+  if (!linktype || !rawId) return { kind: 'redirect-base' };
+  if (linktype !== 'id' && linktype !== 'profiles') {
+    return { kind: 'unknown', linktype, linkid: rawId };
+  }
+  let value;
+  try {
+    value = decodeURIComponent(rawId);
+  } catch {
+    value = rawId;
+  }
+  return { kind: linktype, value };
+}
+
+export async function handleRequest(request, env, ctx) {
+  const url = new URL(request.url);
+  const { pathname, hostname } = url;
+  const route = parseRoute(pathname);
+  if (route.kind === 'favicon') return handleFavicon();
+  const analytics = analyticsSnippet(env);
+  if (route.kind === 'home') {
+    return new Response(indexPage(hostname, analytics), {
+      status: 200,
+      headers: { 'Content-Type': 'text/html', 'Cache-Control': 'max-age=3600' }
+    });
+  }
+  if (route.kind === 'redirect-base') {
+    return Response.redirect(base, 301);
+  }
+  if (route.kind === 'unknown') {
+    return new Response(
+      errorPage(hostname, 404, "Not Found", "Only /id/{vanity} and /profiles/{steamID} are supported.", analytics),
+      { status: 404, headers: { 'Content-Type': 'text/html' } }
+    );
+  }
+  try {
+    let linkid;
+    if (route.kind === 'id') {
+      const steamId64 = await getId(route.value, env);
+      linkid = steamId64 ? convertToDota2Id(steamId64) : null;
+    } else {
+      linkid = convertToDota2Id(route.value);
+    }
+    if (!linkid) {
+      return new Response(
+        errorPage(hostname, 404, "Profile Not Found", "We could not resolve a valid Steam ID for the provided URL.", analytics),
+        { status: 404, headers: { 'Content-Type': 'text/html' } }
+      );
+    }
+    const destinationURL = `${base}players/${linkid}`;
+    return new Response(
+      redirectPage(destinationURL, hostname, analytics, resolveBanners(env)),
+      { status: 200, headers: { 'Content-Type': 'text/html', 'Cache-Control': 'max-age=300' } }
+    );
+  } catch (error) {
+    console.error("Request handling error:", error);
+    if (error.status === 429) {
+      return new Response(
+        errorPage(hostname, 429, "Rate Limit Exceeded", `We're receiving too many requests. Please try again in ${error.retryAfter || 60} seconds.`, analytics),
+        { status: 429, headers: { 'Content-Type': 'text/html', 'Retry-After': String(error.retryAfter || 60) } }
+      );
+    }
+    return new Response(
+      errorPage(hostname, error.status || 500, error.message || "Server Error", "Something went wrong processing your request. Please try again later.", analytics),
+      { status: error.status || 500, headers: { 'Content-Type': 'text/html' } }
+    );
+  }
+}
+
+function handleFavicon() {
+  const binaryString = atob(FAVICON_BASE64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return new Response(bytes, {
+    status: 200,
+    headers: { 'Content-Type': 'image/x-icon', 'Cache-Control': 'public, max-age=86400' }
+  });
+}

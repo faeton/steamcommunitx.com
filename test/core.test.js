@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { convertToDota2Id, getConfiguredApiKeys, parseRoute, analyticsSnippet, resolveBanners } from './worker.js';
+import { convertToDota2Id, getConfiguredApiKeys, parseRoute } from '../src/core.js';
+import { analyticsSnippet, resolveBanners } from '../src/pages.js';
+import worker from '../worker.js';
 
 test('convertToDota2Id: SteamID64 → Dota account ID', () => {
   assert.equal(convertToDota2Id('76561197960287930'), '22202');
@@ -189,4 +191,10 @@ test('resolveBanners: drops a label containing markup but keeps the banner', () 
     ])
   });
   assert.deepEqual(out, [{ src: 'https://example.com/embed/a', height: 300 }]);
+});
+
+test('worker adapter: serves the home page through handleRequest', async () => {
+  const res = await worker.fetch(new Request('https://example.com/'), {}, { waitUntil() {} });
+  assert.equal(res.status, 200);
+  assert.match(await res.text(), /One-line redirect to/);
 });
