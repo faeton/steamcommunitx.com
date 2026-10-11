@@ -323,3 +323,19 @@ test('home cache: revalidated with a feed (HTML and /assets must match), long-li
   const without = await handleRequest(new Request('https://example.com/'), {}, ctx);
   assert.equal(without.headers.get('cache-control'), 'max-age=3600');
 });
+
+test('home with feed: rows are pre-rendered from the feed snapshot', async () => {
+  const feed = { ...fakeFeed(), snapshot: () => ({ hourCount: 1, generatedAt: Date.now(), entries: [
+    { steamId64: '76561197960287930', dotaId: '22202', name: 'prerendered', avatarHash: '', private: false, lastTs: Date.now(), count: 1 }
+  ] }) };
+  const html = await (await handleRequest(new Request('https://example.com/'), { FEED: feed }, ctx)).text();
+  assert.match(html, /prerendered/);
+  assert.match(html, /id="feed-data"/);
+});
+
+test('home with feed: a throwing snapshot still renders the page', async () => {
+  const feed = { ...fakeFeed(), snapshot() { throw new Error('db gone'); } };
+  const res = await handleRequest(new Request('https://example.com/'), { FEED: feed }, ctx);
+  assert.equal(res.status, 200);
+  assert.match(await res.text(), /id="feed-section"/);
+});

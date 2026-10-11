@@ -1,4 +1,4 @@
-import { t, ago, avatarUrl } from './client/feed-shared.js';
+import { t, ago, avatarUrl, timeBlock, metaLine, DOTABUFF_PLAYER, LOCK_PATH } from './client/feed-shared.js';
 
 export function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -90,24 +90,57 @@ export function analyticsSnippet(env) {
 const REPO_URL = "https://github.com/faeton/steamcommunitx.com";
 
 
-const FEED_SECTION = `
-    <section class="fd" id="feed-section" aria-label="Recently checked players" hidden>
+// Rows are rendered on the server with the same markup the browser module
+// builds, so the feed is there on first paint; /assets/feed.js then takes
+// over from the embedded snapshot without another request.
+function feedRow(e, lang, now) {
+  const src = avatarUrl(e.avatarHash);
+  const lock = e.private
+    ? `<span class="fd-lock" title="${escapeHtml(t(lang, 'privateProfile'))}" role="img" aria-label="${escapeHtml(t(lang, 'privateProfile'))}"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="${LOCK_PATH}"></path></svg></span>`
+    : '';
+  const badge = e.count > 1 ? `<span class="fd-x">×${Number(e.count)}</span>` : '';
+  const dotaId = String(e.dotaId).replace(/\D/g, '');
+  const name = escapeHtml(e.name);
+  return `<div class="fd-row"><span class="fd-avw"><img class="fd-av" alt="" width="36" height="36" decoding="async"${src ? ` src="${src}"` : ''}>${lock}</span>` +
+    `<div class="fd-who"><div class="fd-nick"><span class="fd-name" title="${name}">${name}</span>${badge}</div>` +
+    `<div class="fd-meta">${escapeHtml(metaLine(lang, { ...e, dotaId }, now))}</div></div>` +
+    `<a class="fd-go" href="${DOTABUFF_PLAYER}${dotaId}" title="${escapeHtml(t(lang, 'dotabuff'))}" aria-label="${escapeHtml(t(lang, 'dotabuff') + ': ' + e.name)}">D</a></div>`;
+}
+
+export function renderFeedSection(snapshot, lang = 'en', now = Date.now()) {
+  const entries = (snapshot && snapshot.entries) || [];
+  let rows = '';
+  let block = null;
+  for (const e of entries) {
+    const b = timeBlock(e.lastTs, now);
+    if (b !== block) {
+      block = b;
+      rows += `<div class="fd-blk">${escapeHtml(t(lang, b))}</div>`;
+    }
+    rows += feedRow(e, lang, now);
+  }
+  const empty = snapshot && !entries.length ? `<div class="fd-empty">${escapeHtml(t(lang, 'empty'))}</div>` : '';
+  // "<" is escaped so a nickname can never close the script element.
+  const data = snapshot ? `\n      <script type="application/json" id="feed-data">${JSON.stringify(snapshot).replace(/</g, '\\u003c')}</script>` : '';
+  return `
+    <section class="fd" id="feed-section" aria-label="${escapeHtml(t(lang, 'feedTitle'))}"${snapshot ? '' : ' hidden'}>
       <div class="fd-head">
-        <h2 data-i18n="feedTitle">Recently checked</h2>
+        <h2 data-i18n="feedTitle">${escapeHtml(t(lang, 'feedTitle'))}</h2>
       </div>
       <div class="fd-search">
-        <input id="feed-q" type="search" autocomplete="off" spellcheck="false" aria-label="Filter by nickname">
+        <input id="feed-q" type="search" autocomplete="off" spellcheck="false" aria-label="Filter by nickname" placeholder="${escapeHtml(t(lang, 'searchPlaceholder'))}">
         <span class="fd-hits" id="feed-hits" aria-live="polite"></span>
       </div>
       <div class="fd-box" id="feed">
         <div class="fd-top">
-          <span class="fd-live"><i></i><span id="feed-live" data-i18n="live">Live</span></span>
-          <span class="fd-count" id="feed-count"></span>
+          <span class="fd-live"><i></i><span id="feed-live" data-i18n="live">${escapeHtml(t(lang, 'live'))}</span></span>
+          <span class="fd-count" id="feed-count">${snapshot ? escapeHtml(t(lang, 'hourCount', { n: snapshot.hourCount })) : ''}</span>
         </div>
         <button class="fd-pill" id="feed-pill" type="button"><span id="feed-pill-text"></span><span class="fd-bar" id="feed-bar"></span></button>
-        <div class="fd-list" id="feed-list" tabindex="0" aria-label="Recently checked players"></div>
-      </div>
+        <div class="fd-list" id="feed-list" tabindex="0" aria-label="${escapeHtml(t(lang, 'feedTitle'))}" data-cols="1" style="--cols: 1"><div class="fd-col">${rows}</div>${empty}</div>
+      </div>${data}
     </section>`;
+}
 
 const FEED_CSS = `
     .fd { margin-bottom: 40px; }
@@ -357,7 +390,7 @@ export function indexPage(hostname, analytics = '', opts = {}) {
       <h1>One-line redirect to <span class="accent">Dotabuff</span></h1>
       <p class="tagline">Swap <code style="color:var(--accent)">steamcommunity.com</code> for <code style="color:var(--accent)">${host}</code> in any Steam profile URL — get sent straight to the matching Dotabuff page.</p>
     </header>
-${feed ? FEED_SECTION : ''}
+${feed ? renderFeedSection(opts.snapshot, opts.lang || 'en') : ''}
 
     <section class="examples" aria-label="URL conversion examples">${exampleCards}
     </section>

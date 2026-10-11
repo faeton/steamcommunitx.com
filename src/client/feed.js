@@ -7,7 +7,8 @@
 import {
   t, pickLang, avatarUrl, splitTerms, matchesTerms, highlightRanges,
   timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, isStale, insertIndex, HOUR_MS,
-  tempoPerMin, nextColumns, maxColumnsFor, pickColumn, TEMPO_WINDOW_MS, metaLine
+  tempoPerMin, nextColumns, maxColumnsFor, pickColumn, TEMPO_WINDOW_MS, metaLine,
+  DOTABUFF_PLAYER, LOCK_PATH
 } from './feed-shared.js';
 
 const ROW = 56;
@@ -133,7 +134,7 @@ function lockBadge() {
   svg.setAttribute('aria-hidden', 'true');
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   path.setAttribute('fill', 'currentColor');
-  path.setAttribute('d', 'M4 7V5a4 4 0 1 1 8 0v2h1v8H3V7h1zm2 0h4V5a2 2 0 1 0-4 0v2z');
+  path.setAttribute('d', LOCK_PATH);
   svg.append(path);
   badge.append(svg);
   return badge;
@@ -169,7 +170,7 @@ function makeRow(e) {
   // catches the feed (important on phones).
   const go = document.createElement('a');
   go.className = 'fd-go';
-  go.href = 'https://www.dotabuff.com/players/' + encodeURIComponent(e.dotaId);
+  go.href = DOTABUFF_PLAYER + encodeURIComponent(e.dotaId);
   go.title = t(lang, 'dotabuff');
   go.setAttribute('aria-label', t(lang, 'dotabuff') + ': ' + e.name);
   go.textContent = 'D';
@@ -618,4 +619,12 @@ setInterval(() => {
 }, 1000);
 setInterval(() => { if (loaded && !paused && !document.hidden) { trim(); layout(); retune(false); } }, 15000);
 
+// The server pre-renders the rows and embeds the same snapshot: take it over
+// right away (identical markup, so nothing visibly changes), then go live.
+try {
+  const embedded = document.getElementById('feed-data');
+  if (embedded) onData(JSON.parse(embedded.textContent), true);
+} catch (err) {
+  console.error('feed: embedded snapshot unreadable', err);
+}
 connect();

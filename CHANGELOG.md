@@ -3,6 +3,14 @@
 All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.0.1] - 2026-10-11
+
+### Changed
+- The home page renders the recent checks feed on the server, so it is
+  visible on first paint instead of appearing (and shifting the page) once
+  the stream connects. The browser module takes over from the embedded
+  snapshot without another request.
+
 ## [2.0.0] - 2026-10-11
 
 ### Added
@@ -29,4 +37,5 @@ All notable changes to this project are documented here. The format is based on
   uploads the Worker, and switching the domain to it takes an explicit
   `--routes` flag. CI runs on Node 24.
 
+[2.0.1]: https://github.com/faeton/steamcommunitx.com/releases/tag/v2.0.1
 [2.0.0]: https://github.com/faeton/steamcommunitx.com/releases/tag/v2.0.0

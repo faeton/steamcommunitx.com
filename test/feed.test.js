@@ -208,3 +208,11 @@ test('recordHit: accepts the whole 32-bit account range, rejects ids outside it'
   assert.equal(feed.recordHit({ steamId64: '76561202255233024', ipHash: 'c' }), false);
   assert.equal(feed.recordHit({ steamId64: '76561197960265727', ipHash: 'd' }), false);
 });
+
+test('snapshot(): the same payload /api/recent.json serves', async () => {
+  const { feed } = makeFeed();
+  feed.recordHit({ steamId64: A, ipHash: '1' });
+  await feed.tick();
+  const body = await (await feed.handle(new Request('https://example.com/api/recent.json'))).json();
+  assert.deepEqual(feed.snapshot(), body);
+});

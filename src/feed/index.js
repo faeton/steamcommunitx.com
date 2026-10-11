@@ -148,6 +148,9 @@ export function createFeed({
 
     tick,
 
+    // Same payload as /api/recent.json; the home page pre-renders from it.
+    snapshot,
+
     start() {
       if (running) return;
       running = true;

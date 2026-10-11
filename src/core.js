@@ -266,7 +266,11 @@ export async function handleRequest(request, env, ctx) {
   const analytics = analyticsSnippet(env);
   const lang = pickLang(request.headers.get('accept-language'));
   if (route.kind === 'home') {
-    return new Response(indexPage(hostname, analytics, { feed: Boolean(env.FEED), lang }), {
+    let snapshot = null;
+    if (env.FEED) {
+      try { snapshot = env.FEED.snapshot(); } catch (e) { console.error("Feed snapshot failed:", e); }
+    }
+    return new Response(indexPage(hostname, analytics, { feed: Boolean(env.FEED), lang, snapshot }), {
       status: 200,
       // With the feed the page loads /assets modules that change on deploy, so
       // browsers revalidate instead of pairing an old page with new scripts.
