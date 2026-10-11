@@ -284,7 +284,29 @@ function jsonResponse(data, status = 200, headers = {}) {
 }
 
 // Watchlist "+ ID" box: a vanity name (or /id/<name> URL) → Dota id. One
-// Steam call per add, never on render; successful names are cached by getId.
+// Steam call per add, never on render. Successful names are cached by getId;
+// here misses are remembered for a while and concurrent lookups of one name
+// share a single Steam call.
+const RESOLVE_MISS_MS = 10 * 60 * 1000;
+const resolveMisses = new Map(); // name -> expiry
+const resolving = new Map();     // name -> pending getId promise
+
+function lookupVanity(name, env) {
+  const key = name.toLowerCase();
+  const missUntil = resolveMisses.get(key);
+  if (missUntil && missUntil > Date.now()) return Promise.resolve(null);
+  if (resolving.has(key)) return resolving.get(key);
+  const p = getId(key, env).then(id => {
+    if (!id) {
+      if (resolveMisses.size > 10000) resolveMisses.clear();
+      resolveMisses.set(key, Date.now() + RESOLVE_MISS_MS);
+    }
+    return id;
+  }).finally(() => resolving.delete(key));
+  resolving.set(key, p);
+  return p;
+}
+
 async function resolveVanity(request, env) {
   const name = vanityName(new URL(request.url).searchParams.get('v'));
   if (!name) return jsonResponse({ error: 'not a vanity name' }, 400);
@@ -293,7 +315,7 @@ async function resolveVanity(request, env) {
   }
   let steamId64;
   try {
-    steamId64 = await getId(name, env);
+    steamId64 = await lookupVanity(name, env);
   } catch (e) {
     return jsonResponse({ error: 'steam unavailable' }, 502);
   }

@@ -27,6 +27,7 @@ let pollTimer = null;
 let nudgeTimer = null;
 let inFlight = false;
 let retryAt = 0;                    // after a 429 nothing asks before this
+let listGen = 0;                    // bumps on every list change; stale adds are dropped
 let bell = false;
 let audio = null;
 let changeHandler = () => {};
@@ -162,6 +163,7 @@ function syncUrl() {
 }
 
 function setList(next, save = true) {
+  listGen++;
   list = next;
   watched = new Set(list.map(accountToSteamId64));
   for (const id of status.keys()) if (!list.includes(id)) status.delete(id);
@@ -216,12 +218,21 @@ function schedule(ms) {
   if (list.length) pollTimer = setTimeout(refresh, ms);
 }
 
+const LIMITED = 'limited';
+
 async function resolve(name) {
+  const ctl = 'AbortController' in window ? new AbortController() : null;
+  const killer = ctl && setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch('/api/resolve.json?v=' + encodeURIComponent(name), { cache: 'no-store' });
+    const res = await fetch('/api/resolve.json?v=' + encodeURIComponent(name), { cache: 'no-store', signal: ctl && ctl.signal });
+    if (res.status === 429) return LIMITED;
     if (!res.ok) return null;
     return parseCheckList(String((await res.json()).dotaId))[0] || null;
-  } catch { return null; }
+  } catch {
+    return null; // offline or timed out
+  } finally {
+    clearTimeout(killer);
+  }
 }
 
 // ---- signals ----
@@ -270,22 +281,30 @@ function wire() {
     ev.preventDefault();
     const input = $('watch-in');
     if (input.disabled) return;
-    const tokens = input.value.split(/[\s,;]+/).filter(Boolean);
+    const tokens = input.value.slice(0, 1024).split(/[\s,;]+/).filter(Boolean);
     const added = [];
+    const gen = listGen;
     // Ids and id URLs parse locally; /id/<name> links and bare names ask the
-    // server (one Steam lookup each), in input order.
+    // server (one Steam lookup each, at most MAX_WATCH per add), in input order.
     input.disabled = true;
-    for (const token of tokens) {
-      if (parseCheckList([...list, ...added]).length >= MAX_WATCH) break;
-      const ids = parseCheckList(token);
-      if (ids.length) { added.push(...ids); continue; }
-      const name = vanityName(token);
-      if (name) {
+    try {
+      const names = new Set();
+      for (const token of tokens) {
+        if (parseCheckList([...list, ...added]).length >= MAX_WATCH) break;
+        const ids = parseCheckList(token);
+        if (ids.length) { added.push(...ids); continue; }
+        const name = vanityName(token);
+        if (!name || names.has(name.toLowerCase()) || names.size >= MAX_WATCH) continue;
+        names.add(name.toLowerCase());
         const id = await resolve(name);
+        if (id === LIMITED) break;
         if (id) added.push(id);
       }
+    } finally {
+      input.disabled = false;
     }
-    input.disabled = false;
+    // The list was cleared or edited meanwhile: that edit wins.
+    if (gen !== listGen) return;
     if (!added.length) { input.setAttribute('aria-invalid', 'true'); input.focus(); return; }
     input.removeAttribute('aria-invalid');
     input.value = '';

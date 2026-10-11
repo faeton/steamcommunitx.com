@@ -8,7 +8,8 @@ All notable changes to this project are documented here. The format is based on
 ### Added
 - Watchlist box accepts vanity links (`/id/name` on this site or Steam) and
   bare vanity names, resolved via `GET /api/resolve.json` (one Steam lookup
-  per add, 10 per minute per IP).
+  per add, 10 per minute per IP and 60 per minute in total; misses are
+  remembered for 10 minutes and concurrent lookups of one name share a call).
 
 ### Fixed
 - Profile URLs with a SteamID3 (`/profiles/[U:1:x]`) are accepted.

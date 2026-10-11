@@ -258,3 +258,10 @@ test('allowResolve: 10 vanity lookups per minute per IP', () => {
   clock.now += 60_000;
   assert.equal(feed.allowResolve('ip'), true);
 });
+
+test('allowResolve: a global budget caps vanity lookups across all IPs', () => {
+  const { feed } = makeFeed();
+  let ok = 0;
+  for (let i = 0; i < 200; i++) if (feed.allowResolve(`ip${i}`)) ok++;
+  assert.equal(ok, 60);
+});

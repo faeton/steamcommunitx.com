@@ -468,3 +468,27 @@ test('/api/resolve.json: vanity name → Dota id, 404 on no match, 400 on junk, 
     globalThis.fetch = realFetch;
   }
 });
+
+test('/api/resolve.json: concurrent lookups of one name share a Steam call; misses are cached', async () => {
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async url => {
+    calls++;
+    await new Promise(r => setTimeout(r, 20));
+    const name = new URL(url).searchParams.get('vanityurl');
+    return Response.json({ response: name === 'sharedname' ? { success: 1, steamid: '76561198123456789' } : { success: 42 } });
+  };
+  const env = { STEAM_API_KEY: 'k', FEED: { ...fakeFeed(), allowResolve: () => true } };
+  const req = q => new Request(`https://example.com/api/resolve.json?v=${q}`);
+  try {
+    const [a, b] = await Promise.all([handleRequest(req('sharedname'), env, ctx), handleRequest(req('SharedName'), env, ctx)]);
+    assert.equal(a.status, 200);
+    assert.equal(b.status, 200);
+    assert.equal(calls, 1);
+    assert.equal((await handleRequest(req('missname'), env, ctx)).status, 404);
+    assert.equal((await handleRequest(req('missname'), env, ctx)).status, 404);
+    assert.equal(calls, 2); // the second miss came from the cache
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
