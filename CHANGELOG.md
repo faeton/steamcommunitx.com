@@ -3,6 +3,12 @@
 All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.2.0] - 2026-10-11
+
+### Added
+- Clicking a nickname in the feed opens the player's Steam profile; the D tile
+  still opens Dotabuff.
+
 ## [2.1.0] - 2026-10-11
 
 ### Added
@@ -43,6 +49,7 @@ All notable changes to this project are documented here. The format is based on
   uploads the Worker, and switching the domain to it takes an explicit
   `--routes` flag. CI runs on Node 24.
 
+[2.2.0]: https://github.com/faeton/steamcommunitx.com/releases/tag/v2.2.0
 [2.1.0]: https://github.com/faeton/steamcommunitx.com/releases/tag/v2.1.0
 [2.0.1]: https://github.com/faeton/steamcommunitx.com/releases/tag/v2.0.1
 [2.0.0]: https://github.com/faeton/steamcommunitx.com/releases/tag/v2.0.0

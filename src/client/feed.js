@@ -8,7 +8,7 @@ import {
   t, pickLang, avatarUrl, splitTerms, matchesEntry, highlightRanges,
   timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, isStale, insertIndex, HOUR_MS,
   tempoPerMin, nextColumns, maxColumnsFor, pickColumn, TEMPO_WINDOW_MS, metaLine,
-  DOTABUFF_PLAYER, LOCK_PATH
+  DOTABUFF_PLAYER, STEAM_PROFILE, LOCK_PATH
 } from './feed-shared.js';
 
 const ROW = 56;
@@ -160,8 +160,10 @@ function makeRow(e) {
   who.className = 'fd-who';
   r._nick = document.createElement('div');
   r._nick.className = 'fd-nick';
-  r._name = document.createElement('span');
+  // The nickname opens the Steam profile; the D tile opens Dotabuff.
+  r._name = document.createElement('a');
   r._name.className = 'fd-name';
+  r._name.href = STEAM_PROFILE + encodeURIComponent(e.steamId64);
   r._name.title = e.name;
   r._meta = document.createElement('div');
   r._meta.className = 'fd-meta';

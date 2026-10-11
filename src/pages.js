@@ -1,4 +1,4 @@
-import { t, ago, avatarUrl, timeBlock, metaLine, DOTABUFF_PLAYER, LOCK_PATH } from './client/feed-shared.js';
+import { t, ago, avatarUrl, timeBlock, metaLine, DOTABUFF_PLAYER, STEAM_PROFILE, LOCK_PATH } from './client/feed-shared.js';
 
 export function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -100,9 +100,10 @@ function feedRow(e, lang, now) {
     : '';
   const badge = e.count > 1 ? `<span class="fd-x">×${Number(e.count)}</span>` : '';
   const dotaId = String(e.dotaId).replace(/\D/g, '');
+  const steamId64 = String(e.steamId64).replace(/\D/g, '');
   const name = escapeHtml(e.name);
   return `<div class="fd-row"><span class="fd-avw"><img class="fd-av" alt="" width="36" height="36" decoding="async"${src ? ` src="${src}"` : ''}>${lock}</span>` +
-    `<div class="fd-who"><div class="fd-nick"><span class="fd-name" title="${name}">${name}</span>${badge}</div>` +
+    `<div class="fd-who"><div class="fd-nick"><a class="fd-name" href="${STEAM_PROFILE}${steamId64}" title="${name}">${name}</a>${badge}</div>` +
     `<div class="fd-meta">${escapeHtml(metaLine(lang, { ...e, dotaId }, now))}</div></div>` +
     `<a class="fd-go" href="${DOTABUFF_PLAYER}${dotaId}" title="${escapeHtml(t(lang, 'dotabuff'))}" aria-label="${escapeHtml(t(lang, 'dotabuff') + ': ' + e.name)}">D</a></div>`;
 }
@@ -178,7 +179,8 @@ const FEED_CSS = `
     .fd-lock svg { width: 8px; height: 8px; display: block; }
     .fd-who { flex: 1; min-width: 0; }
     .fd-nick { display: flex; align-items: center; min-width: 0; font-weight: 600; font-size: 15px; }
-    .fd-name { min-width: 0; max-width: 18em; overflow: hidden; white-space: nowrap; unicode-bidi: isolate; }
+    .fd-name { min-width: 0; max-width: 18em; overflow: hidden; white-space: nowrap; unicode-bidi: isolate; color: inherit; text-decoration: none; }
+    .fd-name:hover { color: var(--accent); text-decoration: none; }
     /* Long nicknames fade out instead of stretching the column or ending in "…". */
     .fd-name.fd-fade {
       -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);

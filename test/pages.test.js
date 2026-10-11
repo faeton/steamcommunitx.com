@@ -43,6 +43,7 @@ test('renderFeedSection: server-rendered rows, escaped names, visible on first p
   assert.match(html, /<span class="fd-x">×3<\/span>/);
   assert.match(html, /id 22202 · 5s ago/);
   assert.match(html, /href="https:\/\/www\.dotabuff\.com\/players\/22202"/);
+  assert.match(html, /<a class="fd-name" href="https:\/\/steamcommunity\.com\/profiles\/76561197960287930" title="&lt;script&gt;x&lt;\/script&gt;">/);
   assert.equal((html.match(/class="fd-lock"/g) || []).length, 1);
   assert.match(html, /<div class="fd-blk">Just now<\/div>/);
   assert.match(html, /<div class="fd-blk">Last hour<\/div>/);

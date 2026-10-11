@@ -4,6 +4,7 @@
 export const AVATAR_HASH_RE = /^[0-9a-f]{40}$/;
 export const HOUR_MS = 60 * 60 * 1000;
 export const DOTABUFF_PLAYER = 'https://www.dotabuff.com/players/';
+export const STEAM_PROFILE = 'https://steamcommunity.com/profiles/';
 export const LOCK_PATH = 'M4 7V5a4 4 0 1 1 8 0v2h1v8H3V7h1zm2 0h4V5a2 2 0 1 0-4 0v2z';
 
 export function avatarUrl(hash) {
