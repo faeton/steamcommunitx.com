@@ -12,7 +12,7 @@ const ROW = 56;
 const IDLE_MS = 8000;
 const LEAVE_MS = 1500;
 const HOVER_MAX_MS = 30000; // a cursor parked on the list does not freeze it forever
-const RELEASE_SCROLL_MS = 350;
+const RELEASE_FAILSAFE_MS = 1000; // go live even if the smooth scroll never reports reaching the top
 const BURST = 3;
 const MAX_DRIP = 60;
 const MAX_ROWS = 200;
@@ -327,6 +327,11 @@ function pause(ms) {
   releaseTimer = null;
   flushTimer = null;
   ignoreScrollUntil = 0;
+  // Rows still waiting to drip in count as held: the pill shows them and
+  // nothing is inserted at the top while the reader holds the list.
+  clearTimeout(dripTimer);
+  dripTimer = null;
+  if (incoming.length) held.unshift(...incoming.splice(0));
   try { (bar.getAnimations ? bar.getAnimations() : []).forEach(a => a.cancel()); } catch { /* old browser */ }
   if (ms) {
     releaseTimer = setTimeout(release, ms);
@@ -338,11 +343,12 @@ function pause(ms) {
 function release() {
   clearTimeout(releaseTimer);
   releaseTimer = null;
-  if (flushTimer) return;
+  if (!paused || flushTimer) return;
   if (list.scrollTop > 0 && !reduce) {
-    ignoreScrollUntil = Date.now() + 800; // our own smooth scroll is not user intent
+    // Our own smooth scroll is not user intent; go live once it reaches the top.
+    ignoreScrollUntil = Date.now() + RELEASE_FAILSAFE_MS;
     try { list.scrollTo({ top: 0, behavior: 'smooth' }); } catch { list.scrollTop = 0; }
-    flushTimer = setTimeout(goLive, RELEASE_SCROLL_MS);
+    flushTimer = setTimeout(goLive, RELEASE_FAILSAFE_MS);
   } else {
     list.scrollTop = 0;
     goLive();
@@ -350,7 +356,9 @@ function release() {
 }
 
 function goLive() {
+  clearTimeout(flushTimer);
   flushTimer = null;
+  ignoreScrollUntil = 0;
   paused = false;
   box.classList.remove('paused');
   liveEl.textContent = t(lang, 'live');
@@ -378,10 +386,19 @@ function onIntent() {
   list.addEventListener(ev, onIntent, { passive: true });
 });
 list.addEventListener('scroll', () => {
+  if (flushTimer) {
+    if (atTop()) goLive(); // the release scroll arrived
+    return;
+  }
   const now = Date.now();
-  if (now < ignoreScrollUntil || now - lastIntent > 900) return; // not the user
-  if (atTop() && !hover) release();
-  else pause(hover ? HOVER_MAX_MS : IDLE_MS);
+  if (now < ignoreScrollUntil) return;
+  // Away from the top always holds the list, including momentum scrolling
+  // that outlasts the gesture which started it.
+  if (!atTop()) pause(hover ? HOVER_MAX_MS : IDLE_MS);
+  else if (now - lastIntent <= 900) {
+    if (hover) pause(HOVER_MAX_MS);
+    else release();
+  }
 }, { passive: true });
 list.addEventListener('touchend', () => {
   if (paused && atTop()) pause(LEAVE_MS);
@@ -466,11 +483,16 @@ function stopPolling() {
   pollTimer = null;
 }
 
+function parse(ev) {
+  try { return JSON.parse(ev.data); } catch { return null; }
+}
+
 function connect() {
+  if (es || pollTimer || document.hidden) return; // one transport at a time; none while hidden
   if (!('EventSource' in window)) { startPolling(); return; }
   es = new EventSource('/api/stream');
-  es.addEventListener('snapshot', ev => onData(JSON.parse(ev.data), true));
-  es.addEventListener('entries', ev => onData(JSON.parse(ev.data), false));
+  es.addEventListener('snapshot', ev => { const d = parse(ev); if (d) onData(d, true); });
+  es.addEventListener('entries', ev => { const d = parse(ev); if (d) onData(d, false); });
   // While the stream is down (reconnecting or refused) keep the list fresh by
   // polling; the next successful open stops it.
   es.onopen = () => { streamUp = true; stopPolling(); };
