@@ -12,6 +12,7 @@ const A = '76561197960287930'; // dota 22202
 const B = '76561197960287931'; // dota 22203
 const C = '76561197960287932'; // dota 22204
 const D = '76561197960287933'; // dota 22205
+const HOUR = 60 * 60 * 1000;
 const quiet = { error() {}, warn() {}, log() {} };
 
 function steam(overrides = {}) {
@@ -217,7 +218,7 @@ test('snapshot(): the same payload /api/recent.json serves', async () => {
   assert.deepEqual(feed.snapshot(), body);
 });
 
-test('watch: 24 h status per Dota id in input order; read-only', async () => {
+test('watch: 24 h status per Dota id in input order', async () => {
   const { feed, clock } = makeFeed({ overrides: { [B]: null } });
   feed.recordHit({ steamId64: A, ipHash: '1' });
   feed.recordHit({ steamId64: B, ipHash: '2' });
@@ -229,7 +230,65 @@ test('watch: 24 h status per Dota id in input order; read-only', async () => {
     ['22204', C, 0, null], ['22203', B, 1, null], ['22202', A, 1, 'name-30']
   ]);
   assert.equal(w.items[2].avatarHash, HASH);
-  assert.equal(feed.health().pending, 0); // asking never queues a Steam lookup
+  assert.equal(feed.health().pending, 1); // only C, never fetched; B is known (Steam had nobody)
+});
+
+test('watch: unknown players get their name on a later poll, without a check', async () => {
+  const { feed } = makeFeed({ overrides: { [B]: { personaname: 'bravo', communityvisibilitystate: 1 } } });
+  const first = feed.watch(['22203'], 'ip');
+  assert.equal(first.items[0].name, null);
+  feed.watch(['22203'], 'ip'); // polling again does not queue twice
+  assert.equal(feed.health().pending, 1);
+  await feed.tick();
+  const [b] = feed.watch(['22203'], 'ip').items;
+  assert.deepEqual([b.name, b.avatarHash, b.private, b.count, b.lastTs], ['bravo', HASH, true, 0, null]);
+  assert.equal(feed.health().pending, 0);
+  assert.equal(feed.snapshot().entries.length, 0); // not on the board: nobody checked
+  assert.equal(feed.snapshot().hourCount, 0);
+});
+
+test('watch: lookups share a global budget; real checks still queue', async () => {
+  const { feed, clock } = makeFeed();
+  const ids = n => Array.from({ length: 10 }, (_, i) => String(1_000_000 + n * 10 + i));
+  for (let n = 0; n < 40; n++) feed.watch(ids(n), `ip${n}`);
+  assert.equal(feed.health().pending, 300);
+  clock.now += 60_000;
+  feed.watch(ids(40), 'ip-next');
+  assert.equal(feed.health().pending, 310);
+  // A real check still queues even with watch lookups waiting.
+  assert.equal(feed.recordHit({ steamId64: A, ipHash: 'x' }), true);
+});
+
+test('watch: per-IP lookup budget; bogus ids are looked up once, then known', async () => {
+  const { feed } = makeFeed({ overrides: { [C]: null, [D]: null } });
+  const ids = n => Array.from({ length: 10 }, (_, i) => String(2_000_000 + n * 10 + i));
+  for (let n = 0; n < 5; n++) feed.watch(ids(n), 'greedy');
+  assert.equal(feed.health().pending, 30);
+  feed.watch(['22204', '22205'], 'other');
+  assert.equal(feed.health().pending, 32);
+  await feed.tick();
+  assert.equal(feed.health().pending, 0); // all settled, no backoff
+  feed.watch(['22204', '22205'], 'other');
+  assert.equal(feed.health().pending, 0);
+  assert.deepEqual(feed.watch(['22204'], 'other').items.map(i => i.name), [null]);
+});
+
+test('watch: a "not found" is asked again after 6 hours, and the retry reaches Steam', async () => {
+  const overrides = { [C]: null };
+  const { feed, clock } = makeFeed({ overrides });
+  feed.recordHit({ steamId64: A, ipHash: 'x' }); // a reference so the miss is trusted
+  await feed.tick();
+  feed.watch(['22204'], 'ip');
+  await feed.tick();
+  clock.now += 5 * HOUR;
+  feed.watch(['22204'], 'ip');
+  assert.equal(feed.health().pending, 0);
+  delete overrides[C]; // Steam returns C again
+  clock.now += 2 * HOUR;
+  feed.watch(['22204'], 'ip');
+  assert.equal(feed.health().pending, 1);
+  await feed.tick();
+  assert.equal(feed.watch(['22204'], 'ip').items[0].name, 'name-32');
 });
 
 test('/api/check.json: parses ids, no-store, per-IP limit shared with watch()', async () => {
@@ -248,6 +307,18 @@ test('/api/check.json: parses ids, no-store, per-IP limit shared with watch()', 
   assert.equal(limited.headers.get('retry-after'), '60');
   assert.equal(feed.watch(['1'], '9.9.9.9'), null);
   assert.equal((await feed.handle(req('22202', '8.8.8.8'))).status, 200);
+});
+
+test('watch: a lookup refused by the global budget does not use up the IP budget', async () => {
+  const { feed, clock } = makeFeed();
+  const ids = n => Array.from({ length: 10 }, (_, i) => String(3_000_000 + n * 10 + i));
+  for (let n = 0; n < 30; n++) feed.watch(ids(n), `ip${n}`); // t=0: global budget of 300 spent
+  clock.now += 59_000;
+  for (let n = 30; n < 33; n++) feed.watch(ids(n), 'late');  // t=59 s: refused globally
+  assert.equal(feed.health().pending, 300);
+  clock.now += 1_000; // t=60 s: the global window resets, the 'late' one would not have
+  for (let n = 40; n < 43; n++) feed.watch(ids(n), 'late');
+  assert.equal(feed.health().pending, 330); // 'late' still has its full 30
 });
 
 test('allowResolve: 10 vanity lookups per minute per IP', () => {

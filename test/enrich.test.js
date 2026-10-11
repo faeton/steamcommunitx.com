@@ -83,6 +83,120 @@ test('Enricher.tick: a single unknown id is stored as not found', async () => {
   assert.equal(store.getPlayer(id(1)).found, 0);
 });
 
+test('Enricher.tick: the latest players Steam returned ride along, so a batch of bogus ids settles', async () => {
+  const store = new FeedStore(openDb(':memory:'), () => 1);
+  store.completePending([], [
+    { steamid: id(90), name: 'old', avatarHash: '', found: 1, private: 0, fetchedAt: 0 },
+    { steamid: id(91), name: 'gone', avatarHash: '', found: 0, private: 0, fetchedAt: 1 },
+    { steamid: id(92), name: 'new', avatarHash: '', found: 1, private: 0, fetchedAt: 1 },
+    { steamid: id(93), name: 'older', avatarHash: '', found: 1, private: 0, fetchedAt: -1 }
+  ]);
+  for (let i = 1; i <= 10; i++) store.queueLookup(id(i));
+  const asked = [];
+  const enricher = new Enricher({
+    store, fetchSummaries: async ids => { asked.push(ids); return ids.filter(s => s >= id(90)).map(s => summary(s)); },
+    onEntries() {}, blockedWords: () => [], clock: () => 1, log: quiet
+  });
+  const r = await enricher.tick();
+  assert.equal(r.processed, 10);
+  assert.deepEqual(asked[0].slice(10).sort(), [id(90), id(92)].sort());
+  assert.equal(store.pendingCount(), 0);
+  assert.equal(store.getPlayer(id(1)).found, 0);
+  assert.equal(store.getPlayer(id(92)).name, 'new'); // references are asked for, not rewritten
+  assert.equal(enricher.nextDelay(), 30_000);
+});
+
+test('Enricher.tick: references that went silent too still mean a glitch', async () => {
+  const store = new FeedStore(openDb(':memory:'), () => 1);
+  store.completePending([], [{ steamid: id(90), name: 'ref', avatarHash: '', found: 1, private: 0, fetchedAt: 0 }]);
+  store.queueLookup(id(1));
+  const enricher = new Enricher({
+    store, fetchSummaries: async () => [], onEntries() {}, blockedWords: () => [], clock: () => 1, log: quiet
+  });
+  assert.match((await enricher.tick()).error.message, /empty/);
+  assert.equal(store.pendingCount(), 1);
+});
+
+test('Enricher.tick: cold start, bogus watchlist lookups alone settle; real checks go first and are not starved', async () => {
+  const store = new FeedStore(openDb(':memory:'), () => 1);
+  for (let i = 1; i <= 120; i++) store.queueLookup(id(i)); // more than one chunk of bogus lookups
+  store.addCheck(id(500)); // queued last, but a real check
+  const asked = [];
+  const enricher = new Enricher({
+    store, fetchSummaries: async ids => { asked.push(ids); return ids.filter(s => s === id(500)).map(s => summary(s)); },
+    onEntries() {}, blockedWords: () => [], clock: () => 1, log: quiet
+  });
+  const r = await enricher.tick();
+  assert.equal(r.processed, 121);
+  assert.equal(asked[0][0], id(500));
+  assert.equal(asked[1].at(-1), id(500)); // the found real player rides along as a reference
+  assert.equal(store.getPlayer(id(500)).found, 1);
+  assert.equal(store.getPlayer(id(120)).found, 0);
+  assert.equal(store.pendingCount(), 0);
+});
+
+test('Enricher.tick: cold start, bogus checks stay queued but bogus lookups beside them settle', async () => {
+  const store = new FeedStore(openDb(':memory:'), () => 1);
+  store.queueLookup(id(1));
+  store.addCheck(id(2));
+  store.addCheck(id(3));
+  const enricher = new Enricher({
+    store, fetchSummaries: async () => [], onEntries() {}, blockedWords: () => [], clock: () => 1, log: quiet
+  });
+  const r = await enricher.tick();
+  assert.match(r.error.message, /empty/);
+  assert.equal(r.processed, 1);
+  assert.equal(store.getPlayer(id(1)).found, 0);
+  assert.deepEqual(store.takePending(10).sort(), [id(2), id(3)].sort());
+});
+
+test('Enricher.tick: a glitched chunk stays queued, later chunks commit and give it references next time', async () => {
+  const store = new FeedStore(openDb(':memory:'), () => 1);
+  for (let i = 1; i <= 98; i++) store.addCheck(id(i), 1); // first chunk: all nonexistent
+  store.addCheck(id(500), 2);
+  store.addCheck(id(501), 2);
+  const enricher = new Enricher({
+    store, fetchSummaries: async ids => ids.filter(s => s >= id(500)).map(s => summary(s)),
+    onEntries() {}, blockedWords: () => [], clock: () => 1, log: quiet
+  });
+  const r1 = await enricher.tick();
+  assert.match(r1.error.message, /empty/);
+  assert.equal(r1.processed, 2);
+  assert.equal(store.getPlayer(id(500)).found, 1);
+  assert.equal(store.pendingCount(), 98);
+  const r2 = await enricher.tick(); // now with references: the misses are real
+  assert.equal(r2.error, undefined);
+  assert.equal(store.pendingCount(), 0);
+  assert.equal(store.getPlayer(id(1)).found, 0);
+  assert.equal(enricher.nextDelay(), 30_000);
+});
+
+test('Enricher.tick: a thrown Steam error stops the tick but keeps chunks already answered', async () => {
+  const store = new FeedStore(openDb(':memory:'), () => 1);
+  for (let i = 1; i <= 150; i++) store.addCheck(id(i));
+  let calls = 0;
+  const enricher = new Enricher({
+    store, fetchSummaries: async ids => { if (++calls > 1) throw new Error('Steam down'); return ids.map(s => summary(s)); },
+    onEntries() {}, blockedWords: () => [], clock: () => 1, log: quiet
+  });
+  const r = await enricher.tick();
+  assert.match(r.error.message, /Steam down/);
+  assert.equal(r.processed, 98);
+  assert.equal(store.pendingCount(), 52);
+  assert.equal(calls, 2);
+});
+
+test('Enricher.tick: cold start, a chunk of only watchlist lookups is settled without references', async () => {
+  const store = new FeedStore(openDb(':memory:'), () => 1);
+  store.queueLookup(id(1));
+  store.queueLookup(id(2));
+  const enricher = new Enricher({
+    store, fetchSummaries: async () => [], onEntries() {}, blockedWords: () => [], clock: () => 1, log: quiet
+  });
+  assert.equal((await enricher.tick()).processed, 2);
+  assert.equal(store.getPlayer(id(1)).found, 0);
+});
+
 test('createSteamSummaries: no keys is an error', async () => {
   await assert.rejects(createSteamSummaries({ env: {}, fetchImpl: async () => Response.json({}) })([id(1)]), /no Steam API keys/);
 });
@@ -104,7 +218,7 @@ test('Enricher.tick: chunks of 100, private kept, missing dropped, pending clear
     log: quiet
   });
   const result = await enricher.tick();
-  assert.deepEqual(calls, [100, 50]);
+  assert.deepEqual(calls, [98, 54]); // an empty store has no references; then 2 found in the first chunk
   assert.equal(result.processed, 150);
   assert.equal(store.pendingCount(), 0);
   assert.equal(store.getPlayer(id(7)).private, 1);

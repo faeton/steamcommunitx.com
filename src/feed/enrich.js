@@ -3,7 +3,11 @@ import { AVATAR_HASH_RE } from '../client/feed-shared.js';
 import { sanitizeName } from './sanitize.js';
 
 const SUMMARIES_URL = 'https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/';
-const CHUNK = 100;
+// Every batch also asks for the players Steam returned most recently. Nobody at
+// all coming back is then a glitch; anyone else missing really is gone, so a
+// batch of bogus ids is settled instead of staying queued.
+const REFERENCES = 2;
+const CHUNK = 100 - REFERENCES; // Steam takes 100 ids per call
 const MAX_PER_TICK = 500;
 const FRESH_MS = 6 * 60 * 60 * 1000;
 const TICK_MS = 30_000;
@@ -66,41 +70,66 @@ export class Enricher {
     return Math.min(TICK_MS * 2 ** this.failures, MAX_DELAY_MS);
   }
 
-  // One batch: up to 500 queued ids, Steam calls of 100. On any Steam failure
-  // nothing is committed, so the ids stay queued for the next (backed-off) tick.
+  // One batch: up to 500 queued ids, Steam calls of 100. Real checks and
+  // watchlist lookups go in separate calls. Each call that succeeds is
+  // committed; a failed one stays queued for the next (backed-off) tick.
   async tick() {
     const ids = this.store.takePending(MAX_PER_TICK);
     if (!ids.length) return { processed: 0 };
     const now = this.clock();
     const fresh = this.store.freshPlayerIds(ids, FRESH_MS);
     const stale = ids.filter(id => !fresh.has(id));
+    const lookupOnly = this.store.lookupOnlyIds(stale);
+    const chunks = [];
+    for (const group of [stale.filter(id => !lookupOnly.has(id)), stale.filter(id => lookupOnly.has(id))]) {
+      for (let i = 0; i < group.length; i += CHUNK) chunks.push(group.slice(i, i + CHUNK));
+    }
+    const done = [...fresh];
     const players = [];
-    try {
-      for (let i = 0; i < stale.length; i += CHUNK) {
-        const chunk = stale.slice(i, i + CHUNK);
-        const got = await this.fetchSummaries(chunk);
-        // Nobody at all out of several real profile visits is a Steam glitch,
-        // not a batch of deleted accounts: keep them queued and back off.
-        if (!got.length && chunk.length > 1) throw new Error('Steam returned an empty player list');
-        const byId = new Map(got.map(p => [String(p.steamid), p]));
-        for (const id of chunk) {
-          const summary = byId.get(id);
-          if (summary) players.push(toPlayerRow(summary, this.blockedWords(), now));
-          // An omitted player we already know keeps its last data (Steam
-          // omissions are usually transient); an unknown one is not shown.
-          else if (!this.store.getPlayer(id)?.found) {
-            players.push({ steamid: id, name: '—', avatarHash: '', found: 0, private: 0, fetchedAt: now });
-          }
+    let error = null;
+    for (const chunk of chunks) {
+      // References: players found earlier in this tick, else the latest stored.
+      const found = players.filter(p => p.found).map(p => p.steamid).slice(-REFERENCES);
+      const refs = found.length ? found : this.store.foundIds(REFERENCES);
+      const asked = [...new Set([...chunk, ...refs])];
+      let got;
+      try {
+        got = await this.fetchSummaries(asked);
+      } catch (e) {
+        error = e; // Steam unreachable or refusing: stop asking this tick
+        break;
+      }
+      // Nobody at all out of several ids is a Steam glitch, not a batch of
+      // deleted accounts: keep the chunk queued and go on, so a later chunk
+      // can bring references for the retry. Without references (cold start)
+      // a chunk of watchlist lookups cannot tell, so it is settled as not
+      // found; the watchlist asks again in a few hours.
+      if (!got.length && asked.length > 1 && (refs.length || !lookupOnly.has(chunk[0]))) {
+        error = new Error('Steam returned an empty player list');
+        continue;
+      }
+      const byId = new Map(got.map(p => [String(p.steamid), p]));
+      for (const id of chunk) {
+        const summary = byId.get(id);
+        if (summary) players.push(toPlayerRow(summary, this.blockedWords(), now));
+        // An omitted player we already know keeps its last data (Steam
+        // omissions are usually transient); an unknown one is not shown.
+        else if (!this.store.getPlayer(id)?.found) {
+          players.push({ steamid: id, name: '—', avatarHash: '', found: 0, private: 0, fetchedAt: now });
         }
       }
-    } catch (error) {
+      done.push(...chunk);
+    }
+    if (done.length) {
+      this.store.completePending(done, players);
+      this.onEntries(done);
+    }
+    if (error) {
       this.failures += 1;
-      this.log.error(`Feed enrichment failed (${ids.length} queued, attempt ${this.failures}):`, error.message);
-      return { processed: 0, error };
+      this.log.error(`Feed enrichment failed (${ids.length - done.length} of ${ids.length} still queued, attempt ${this.failures}):`, error.message);
+      return { processed: done.length, error };
     }
     this.failures = 0;
-    this.store.completePending(ids, players);
-    this.onEntries(ids);
-    return { processed: ids.length };
+    return { processed: done.length };
   }
 }

@@ -139,7 +139,7 @@ Before a Battle Cup a team can share one link, for example `/?check=123456789,16
 - a new check flashes the row, highlights the player on the board, and puts a counter in the tab title while you are away; the 🔔 button adds a chime and a browser notification;
 - the IDs can be edited in place; the address bar always holds the current link, and the last list is remembered in the browser for a bare visit.
 
-"No checks recorded" covers this redirector only, and your own lookups count as checks too. A link with `?check` is marked `noindex`, and the page sends `Referrer-Policy: strict-origin-when-cross-origin` so the IDs do not leak to the sites it links to.
+"No checks recorded" covers this redirector only, and your own lookups count as checks too. A player nobody checked lately still gets a name and avatar: asking for the status queues a Steam lookup (not a check), so they show up on the next poll. A link with `?check` is marked `noindex`, and the page sends `Referrer-Policy: strict-origin-when-cross-origin` so the IDs do not leak to the sites it links to.
 
 Endpoints: `GET /api/recent.json` (snapshot, cacheable for 10 s), `GET /api/stream` (Server-Sent Events), `GET /api/check.json?ids=…` (watchlist status, up to 10 IDs, 60 lookups per minute per IP), `GET /api/resolve.json?v=<vanity>` (vanity name → Dota ID for the watchlist box, 10 per minute per IP), `GET /healthz`.
 

@@ -20,6 +20,15 @@ const MAX_PENDING = 5000; // beyond this, hits are dropped until Steam catches u
 const FIRST_TICK_MS = 30_000;
 const DAY_MS = 24 * HOUR_MS;
 const WATCH_PER_MIN = 60; // per IP, shared by /api/check.json and the home pre-render
+// Name lookups for watched players nobody checked: a global budget well under
+// what the enricher drains (1000/min), and never more than half the queue, so
+// real checks always have room.
+const WATCH_LOOKUPS_PER_MIN = 300;
+const WATCH_LOOKUPS_PER_IP = 30; // three full lists a minute
+const MAX_WATCH_PENDING = MAX_PENDING / 2;
+// A "not found" may be a Steam hiccup: ask again after this long. Matches the
+// enricher's freshness window, so the retry really reaches Steam.
+const MISS_RETRY_MS = 6 * HOUR_MS;
 
 // Report each GetPlayerSummaries outcome to the Steam health monitor.
 function reporting(fetchSummaries, health) {
@@ -51,6 +60,8 @@ export function createFeed({
   const perIp = new RateLimiter(20, 60_000, clock);
   const perPlayer = new RateLimiter(6, 60_000, clock);
   const perWatcher = new RateLimiter(WATCH_PER_MIN, 60_000, clock);
+  const watchLookups = new RateLimiter(WATCH_LOOKUPS_PER_MIN, 60_000, clock);
+  const watchLookupsPerIp = new RateLimiter(WATCH_LOOKUPS_PER_IP, 60_000, clock);
   // Vanity lookups from the watchlist box: per IP, and a global budget so many
   // IPs together cannot burn the Steam keys.
   const perResolver = new RateLimiter(10, 60_000, clock);
@@ -77,12 +88,22 @@ export function createFeed({
     return { hourCount: hourCount(), generatedAt: clock(), entries: recentEntries() };
   }
 
-  // Watchlist status for canonical Dota ids (parseCheckList output). Read-only:
-  // never queues a Steam lookup. null when this IP is over its budget.
+  // Watchlist status for canonical Dota ids (parseCheckList output). Players
+  // we have no name for yet are queued for a Steam lookup (never as a check),
+  // so the next poll shows them. null when this IP is over its budget.
   function watch(dotaIds, ipKey) {
     if (!perWatcher.allow(ipKey || '-')) return null;
     const ids = dotaIds.map(accountToSteamId64);
     const items = store.checkStatus(ids, clock() - DAY_MS).map((s, i) => ({ dotaId: dotaIds[i], ...s }));
+    if (!stopped) {
+      for (const it of items) {
+        if (it.name !== null || !store.needsLookup(it.steamId64, clock() - MISS_RETRY_MS)) continue;
+        if (store.pendingCount() >= MAX_WATCH_PENDING || !watchLookupsPerIp.can(ipKey || '-') || !watchLookups.can('all')) break;
+        watchLookupsPerIp.allow(ipKey || '-');
+        watchLookups.allow('all');
+        store.queueLookup(it.steamId64, clock());
+      }
+    }
     return { generatedAt: clock(), items };
   }
 

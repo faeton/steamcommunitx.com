@@ -19,6 +19,12 @@ export class RateLimiter {
     return bucket.count <= this.limit;
   }
 
+  // Whether allow() would pass, without counting.
+  can(key) {
+    const bucket = this.buckets.get(key);
+    return !bucket || this.clock() - bucket.start >= this.windowMs || bucket.count < this.limit;
+  }
+
   sweep(now = this.clock()) {
     for (const [key, bucket] of this.buckets) {
       if (now - bucket.start >= this.windowMs) this.buckets.delete(key);

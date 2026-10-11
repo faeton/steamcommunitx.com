@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS players (steamid TEXT PRIMARY KEY, name TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS checks (steamid TEXT NOT NULL, ts INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS checks_ts ON checks(ts);
 CREATE INDEX IF NOT EXISTS checks_steamid_ts ON checks(steamid, ts);
+CREATE INDEX IF NOT EXISTS players_found_fetched ON players(fetched_at) WHERE found = 1;
 `;
 
 export function openDb(path) {
@@ -64,7 +65,18 @@ export class FeedStore {
         'INSERT INTO pending (steamid, first_ts, last_ts, hits) VALUES (?, ?, ?, 1) ' +
         'ON CONFLICT(steamid) DO UPDATE SET last_ts = excluded.last_ts, hits = hits + 1'
       ),
-      takePending: db.prepare('SELECT steamid FROM pending ORDER BY first_ts LIMIT ?'),
+      // Watchlist lookups: queued without a hit, for players neither known nor
+      // queued; a "not found" older than ?2 counts as unknown again.
+      needsLookup: db.prepare(
+        'SELECT NOT EXISTS (SELECT 1 FROM players WHERE steamid = ?1 AND (found = 1 OR fetched_at >= ?2)) ' +
+        'AND NOT EXISTS (SELECT 1 FROM pending WHERE steamid = ?1) AS n'
+      ),
+      queueLookup: db.prepare(
+        'INSERT INTO pending (steamid, first_ts, last_ts, hits) VALUES (?1, ?2, ?2, 0) ON CONFLICT(steamid) DO NOTHING'
+      ),
+      // Real checks first; watchlist lookups (no hits) only after them.
+      takePending: db.prepare('SELECT steamid, hits FROM pending ORDER BY hits = 0, first_ts LIMIT ?'),
+      lookupOnly: db.prepare('SELECT 1 FROM pending WHERE steamid = ? AND hits = 0'),
       pendingCount: db.prepare('SELECT COUNT(*) AS n FROM pending'),
       deletePending: db.prepare('DELETE FROM pending WHERE steamid = ?'),
       upsertPlayer: db.prepare(
@@ -72,6 +84,7 @@ export class FeedStore {
         'ON CONFLICT(steamid) DO UPDATE SET name = excluded.name, avatar_hash = excluded.avatar_hash, ' +
         'found = excluded.found, private = excluded.private, fetched_at = excluded.fetched_at'
       ),
+      foundIds: db.prepare('SELECT steamid FROM players WHERE found = 1 ORDER BY fetched_at DESC LIMIT ?'),
       getPlayer: db.prepare(
         'SELECT steamid, name, avatar_hash AS avatarHash, found, private, fetched_at AS fetchedAt FROM players WHERE steamid = ?'
       ),
@@ -116,8 +129,24 @@ export class FeedStore {
     });
   }
 
+  // Not waiting in the queue, and either never fetched from Steam or last
+  // "not found" before missBefore (Steam sometimes skips a real player).
+  needsLookup(steamId64, missBefore) {
+    return this.s.needsLookup.get(steamId64, missBefore).n === 1;
+  }
+
+  // Queue a name lookup without recording a check.
+  queueLookup(steamId64, ts = this.clock()) {
+    this.s.queueLookup.run(steamId64, ts);
+  }
+
   takePending(limit) {
     return this.s.takePending.all(limit).map(r => r.steamid);
+  }
+
+  // The subset of ids queued only by the watchlist, never by a check.
+  lookupOnlyIds(ids) {
+    return new Set(ids.filter(id => this.s.lookupOnly.get(id)));
   }
 
   pendingCount() {
@@ -127,6 +156,11 @@ export class FeedStore {
   getPlayer(steamId64) {
     const row = this.s.getPlayer.get(steamId64);
     return row ? { ...row } : null;
+  }
+
+  // Players Steam returned most recently: known to exist.
+  foundIds(limit) {
+    return this.s.foundIds.all(limit).map(r => r.steamid);
   }
 
   freshPlayerIds(ids, maxAgeMs) {

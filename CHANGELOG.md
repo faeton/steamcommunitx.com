@@ -3,6 +3,26 @@
 All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.5.4] - 2026-10-11
+
+### Changed
+- Watchlist players nobody has checked lately now get their Steam name and
+  avatar within about a minute: the status request queues a lookup (not a
+  check, so the board and "no checks recorded" stay accurate), under a global
+  and a per-IP budget that leave room for real checks. A "not found" is asked
+  again after 6 hours, in case Steam briefly skipped a real player.
+- The lookup queue serves real checks before watchlist lookups.
+
+### Fixed
+- Every Steam name lookup also asks for the two players Steam returned most
+  recently. An empty answer is still treated as a glitch and retried, but a
+  batch made only of nonexistent ids now gets those players back and is
+  recorded as not found; before, it stayed queued and slowed the feed down
+  with backoff. On a fresh database, a batch of watchlist lookups alone is
+  settled the same way instead of blocking real checks.
+- A Steam failure no longer throws away a whole enrichment round: every call
+  that succeeded is saved, and only the failed batch waits for the retry.
+
 ## [2.5.3] - 2026-10-11
 
 ### Changed

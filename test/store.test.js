@@ -88,6 +88,39 @@ test('RateLimiter: fixed window per key', () => {
   assert.equal(rl.allow('x'), true);
 });
 
+test('FeedStore.queueLookup: queued without a check while neither known nor queued; misses expire', () => {
+  const clock = clockAt(100_000_000);
+  const store = new FeedStore(openDb(':memory:'), clock);
+  const before = () => clock() - 1000;
+  assert.equal(store.needsLookup(A, before()), true);
+  store.queueLookup(A);
+  store.queueLookup(A);
+  assert.equal(store.needsLookup(A, before()), false);
+  assert.deepEqual(store.takePending(10), [A]);
+  store.completePending([A, B], [
+    { steamid: A, name: '—', avatarHash: '', found: 0, private: 0, fetchedAt: clock() },
+    { steamid: B, name: 'bravo', avatarHash: '', found: 1, private: 0, fetchedAt: clock() }
+  ]);
+  assert.equal(store.needsLookup(A, before()), false); // a fresh miss is known too
+  assert.equal(store.pendingCount(), 0);
+  assert.equal(store.seen(A, 0), null);
+  clock.now += 2000;
+  assert.equal(store.needsLookup(A, clock() + 1), true); // the miss is older than the cutoff
+  assert.equal(store.needsLookup(B, clock() + 1), false); // found players never expire here
+});
+
+test('FeedStore: references come from an index; real checks are taken before watchlist lookups', () => {
+  const db = openDb(':memory:');
+  const plan = db.prepare('EXPLAIN QUERY PLAN SELECT steamid FROM players WHERE found = 1 ORDER BY fetched_at DESC LIMIT 2').all();
+  assert.match(plan.map(r => r.detail).join(' '), /players_found_fetched/);
+  const clock = clockAt(1000);
+  const store = new FeedStore(db, clock);
+  store.queueLookup(A, 1);
+  store.addCheck(B, 5);
+  assert.deepEqual(store.takePending(10), [B, A]);
+  assert.deepEqual([...store.lookupOnlyIds([A, B, C])], [A]);
+});
+
 test('FeedStore.checkStatus: per id in input order; names only for players Steam returned', () => {
   const clock = clockAt(100_000_000);
   const store = new FeedStore(openDb(':memory:'), clock);
