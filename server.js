@@ -90,7 +90,7 @@ function sendJson(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
-export function createServer({ env = process.env, dbPath = env.DB_PATH || './data/steamcommunitx.db', fetchImpl = fetch, log = console } = {}) {
+export function createServer({ env = process.env, dbPath = env.DB_PATH || './data/steamcommunitx.db', fetchImpl = fetch, log = console, shutdownMs = 5000 } = {}) {
   if (dbPath !== ':memory:') mkdirSync(dirname(resolve(dbPath)), { recursive: true });
   const db = openDb(dbPath);
   const runtimeEnv = {
@@ -139,21 +139,20 @@ export function createServer({ env = process.env, dbPath = env.DB_PATH || './dat
     p.finally(() => active.delete(p));
   });
 
-  // Order matters: stop the feed (ends SSE streams, waits for a running tick),
-  // stop accepting connections, let in-flight requests finish (5 s cap), then
-  // drop what is left and only then close SQLite.
+  // Stop accepting connections first, then stop the feed (ends SSE streams,
+  // waits for a running tick) while in-flight requests finish. Everything
+  // shares one deadline: a request stuck on Steam must not hold the process
+  // up. Leftover sockets are then dropped and SQLite is closed.
   async function close() {
-    await feed?.stop();
+    const sleep = ms => new Promise(r => setTimeout(r, ms).unref());
     const closed = new Promise(r => server.close(() => r()));
     server.closeIdleConnections?.();
     await Promise.race([
-      Promise.allSettled([...active]),
-      new Promise(r => setTimeout(r, 5000).unref())
+      Promise.allSettled([feed?.stop(), ...active, ...inflight]),
+      sleep(shutdownMs)
     ]);
     server.closeAllConnections?.();
-    await closed;
-    await Promise.allSettled([...active]); // handlers woken by the forced close
-    await Promise.allSettled([...inflight]);
+    await Promise.race([closed, sleep(1000)]);
     db.close();
   }
 

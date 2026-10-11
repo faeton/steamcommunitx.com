@@ -130,3 +130,24 @@ test('writeWebResponse: a body stream that errors destroys the socket instead of
   assert.equal(res.destroyed, true);
   assert.equal(res.writableEnded, false);
 });
+
+test('server: close() is bounded even when a request is stuck on Steam', async () => {
+  const realFetch = globalThis.fetch;
+  let stuck;
+  const reached = new Promise(r => { stuck = r; });
+  globalThis.fetch = (url, opts) => String(url).includes('ResolveVanityURL')
+    ? (stuck(), new Promise(() => {}))
+    : realFetch(url, opts);
+  const app = createServer({ env: { STEAM_API_KEY: 'k' }, dbPath: ':memory:', fetchImpl: steamOk, log: quiet, shutdownMs: 100 });
+  app.server.listen(0, '127.0.0.1');
+  await once(app.server, 'listening');
+  try {
+    realFetch(`http://127.0.0.1:${app.server.address().port}/id/somebody`, { headers: BROWSER }).catch(() => {});
+    await reached;
+    const started = Date.now();
+    await app.close();
+    assert.ok(Date.now() - started < 2000, `close took ${Date.now() - started} ms`);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
