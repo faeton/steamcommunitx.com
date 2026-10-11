@@ -3,12 +3,17 @@
 All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.3.2] - 2026-10-11
+
+### Changed
+- `/id` and `/profiles` without a player no longer redirect to Dotabuff's
+  front page; they show a 404 page explaining the supported URL formats.
+
 ## [2.3.1] - 2026-10-11
 
 ### Fixed
 - Unknown single-segment paths (`/nope`, `/robots.txt`, …) return the 404 page
-  instead of a 301 to Dotabuff's home page. Bare `/id` and `/profiles` still
-  redirect to Dotabuff.
+  instead of a 301 to Dotabuff's home page.
 
 ## [2.3.0] - 2026-10-11
 
@@ -62,6 +67,7 @@ All notable changes to this project are documented here. The format is based on
   uploads the Worker, and switching the domain to it takes an explicit
   `--routes` flag. CI runs on Node 24.
 
+[2.3.2]: https://github.com/faeton/steamcommunitx.com/releases/tag/v2.3.2
 [2.3.1]: https://github.com/faeton/steamcommunitx.com/releases/tag/v2.3.1
 [2.3.0]: https://github.com/faeton/steamcommunitx.com/releases/tag/v2.3.0
 [2.2.0]: https://github.com/faeton/steamcommunitx.com/releases/tag/v2.2.0

@@ -77,10 +77,10 @@ test('parseRoute: trailing subpath after the ID is ignored', () => {
   assert.deepEqual(parseRoute('/profiles/%5BU:1:22202%5D/screenshots'), { kind: 'profiles', value: '[U:1:22202]' });
 });
 
-test('parseRoute: empty linkid redirects to base', () => {
-  assert.deepEqual(parseRoute('/id'), { kind: 'redirect-base' });
-  assert.deepEqual(parseRoute('/id/'), { kind: 'redirect-base' });
-  assert.deepEqual(parseRoute('/profiles'), { kind: 'redirect-base' });
+test('parseRoute: /id and /profiles without an ID are a missing-id page', () => {
+  assert.deepEqual(parseRoute('/id'), { kind: 'missing-id', linktype: 'id' });
+  assert.deepEqual(parseRoute('/id/'), { kind: 'missing-id', linktype: 'id' });
+  assert.deepEqual(parseRoute('/profiles'), { kind: 'missing-id', linktype: 'profiles' });
 });
 
 test('parseRoute: unknown linktype falls into unknown bucket', () => {
@@ -343,11 +343,22 @@ test('home with feed: a throwing snapshot still renders the page', async () => {
 test('parseRoute: a single unknown segment is a 404, not a redirect to Dotabuff', () => {
   assert.deepEqual(parseRoute('/nope'), { kind: 'unknown', linktype: 'nope', linkid: undefined });
   assert.deepEqual(parseRoute('/robots.txt'), { kind: 'unknown', linktype: 'robots.txt', linkid: undefined });
-  assert.deepEqual(parseRoute('/id'), { kind: 'redirect-base' });
+  assert.deepEqual(parseRoute('/id'), { kind: 'missing-id', linktype: 'id' });
 });
 
 test('handleRequest: /nope renders the 404 page', async () => {
   const res = await handleRequest(new Request('https://example.com/nope'), {}, ctx);
   assert.equal(res.status, 404);
   assert.match(await res.text(), /Not Found/);
+});
+
+test('handleRequest: /profiles without an ID explains the URL formats instead of redirecting', async () => {
+  const res = await handleRequest(new Request('https://example.com/profiles/'), { GA_ID: 'G-TEST1' }, ctx);
+  assert.equal(res.status, 404);
+  const html = await res.text();
+  assert.match(html, /Profile ID missing/);
+  assert.match(html, /<code>\/profiles<\/code>/);
+  assert.match(html, /example\.com\/id\/username/);
+  assert.match(html, /example\.com\/profiles\/76561198123456789/);
+  assert.match(html, /G-TEST1/);
 });

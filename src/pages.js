@@ -466,6 +466,8 @@ export function errorPage(hostname, statusCode, title, message, analytics = '') 
       color: #c6d4df !important;
     }
     h1 { color: #e74c3c !important; }
+    .message code { background: rgba(102,192,244,0.12); color: #66c0f4; padding: 1px 6px; border-radius: 4px; }
+    .message .formats { text-align: left; display: table; margin: 14px auto; padding-left: 20px; line-height: 1.9; }
   </style>
   ${statusCode === 429 ? `<script>
     window.onload = function() {

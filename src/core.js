@@ -1,4 +1,4 @@
-import { analyticsSnippet, resolveBanners, indexPage, errorPage, redirectPage } from './pages.js';
+import { analyticsSnippet, resolveBanners, indexPage, errorPage, redirectPage, escapeHtml } from './pages.js';
 import { pickLang } from './client/feed-shared.js';
 
 // Helper functions for API key management
@@ -187,13 +187,6 @@ export function convertToDota2Id(steamId) {
   return null;
 }
 
-// Pure router: classifies a request pathname.
-// Returns one of:
-//   { kind: 'favicon' }
-//   { kind: 'home' }
-//   { kind: 'redirect-base' }              — empty linktype/linkid
-//   { kind: 'unknown', linktype, linkid }  — linktype not in whitelist
-//   { kind: 'id' | 'profiles', value }     — recognized route, value is decoded
 const STEAM64_BASE = 76561197960265728n;
 
 export function accountIdToSteamId64(accountId) {
@@ -236,6 +229,13 @@ export async function ipHash(ip, now = Date.now()) {
   return Array.from(new Uint8Array(digest).slice(0, 8), b => b.toString(16).padStart(2, '0')).join('');
 }
 
+// Pure router: classifies a request pathname.
+// Returns one of:
+//   { kind: 'favicon' }
+//   { kind: 'home' }
+//   { kind: 'missing-id', linktype }       — /id or /profiles without an ID
+//   { kind: 'unknown', linktype, linkid }  — anything that is not a profile path
+//   { kind: 'id' | 'profiles', value }     — recognized route, value is decoded
 export function parseRoute(pathname) {
   if (pathname === '/favicon.ico') return { kind: 'favicon' };
   if (pathname === '/') return { kind: 'home' };
@@ -249,7 +249,7 @@ export function parseRoute(pathname) {
   if (linktype !== 'id' && linktype !== 'profiles') {
     return { kind: 'unknown', linktype, linkid: rawId };
   }
-  if (!rawId) return { kind: 'redirect-base' };
+  if (!rawId) return { kind: 'missing-id', linktype };
   let value;
   try {
     value = decodeURIComponent(rawId);
@@ -279,8 +279,20 @@ export async function handleRequest(request, env, ctx) {
       headers: { 'Content-Type': 'text/html', 'Cache-Control': env.FEED ? 'no-cache' : 'max-age=3600' }
     });
   }
-  if (route.kind === 'redirect-base') {
-    return Response.redirect(base, 301);
+  if (route.kind === 'missing-id') {
+    // A cut-off link: explain the formats instead of dumping the visitor on
+    // Dotabuff's front page.
+    const host = escapeHtml(hostname);
+    return new Response(
+      errorPage(hostname, 404, "Profile ID missing",
+        `This link stops at <code>/${route.linktype}</code> without a player. Add a vanity name or a Steam ID:` +
+        `<ul class="formats"><li><code>${host}/id/username</code></li>` +
+        `<li><code>${host}/profiles/76561198123456789</code></li>` +
+        `<li><code>${host}/profiles/[U:1:123456789]</code></li></ul>` +
+        `<p>Or open any Steam profile and replace <code>steamcommunity.com</code> with <code>${host}</code> in the address bar.</p>`,
+        analytics),
+      { status: 404, headers: { 'Content-Type': 'text/html' } }
+    );
   }
   if (route.kind === 'unknown') {
     return new Response(
