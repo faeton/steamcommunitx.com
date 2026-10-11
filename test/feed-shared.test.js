@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   avatarUrl, pickLang, t, ago, splitTerms, matchesTerms, highlightRanges,
   timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, isStale, insertIndex,
-  tempoPerMin, nextColumns, maxColumnsFor, pickColumn, metaLine, matchesEntry
+  tempoPerMin, nextColumns, maxColumnsFor, pickColumn, metaLine, matchesEntry, shownColumns
 } from '../src/client/feed-shared.js';
 
 const HASH = 'fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb';
@@ -161,4 +161,11 @@ test('matchesEntry: nickname words or Dota / Steam IDs (4+ digits, any form)', (
   assert.equal(matchesEntry(e, splitTerms('999999')), false);
   assert.equal(matchesEntry(e, splitTerms('7')), false); // too short to mean an id, not in the name
   assert.equal(matchesEntry(e, []), true);
+});
+
+test('shownColumns: a filter always shows one reel; otherwise the tempo choice, capped by width', () => {
+  assert.equal(shownColumns(3, true, 720), 1);
+  assert.equal(shownColumns(3, false, 720), 3);
+  assert.equal(shownColumns(3, false, 600), 2);
+  assert.equal(shownColumns(2, false, 380), 1);
 });

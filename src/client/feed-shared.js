@@ -234,3 +234,9 @@ export function pickColumn(lastChanged) {
   for (let i = 1; i < lastChanged.length; i++) if (lastChanged[i] < lastChanged[best]) best = i;
   return best;
 }
+
+// Reels actually shown: the tempo's choice, capped by width, and always one
+// while a filter is active (it is applied at once, even while paused).
+export function shownColumns(tempoCols, filtering, width) {
+  return filtering ? 1 : Math.min(tempoCols, maxColumnsFor(width));
+}

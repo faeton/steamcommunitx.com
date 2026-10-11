@@ -7,7 +7,7 @@
 import {
   t, pickLang, avatarUrl, splitTerms, matchesEntry, highlightRanges,
   timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, isStale, insertIndex, HOUR_MS,
-  tempoPerMin, nextColumns, maxColumnsFor, pickColumn, TEMPO_WINDOW_MS, metaLine,
+  tempoPerMin, nextColumns, maxColumnsFor, pickColumn, shownColumns, TEMPO_WINDOW_MS, metaLine,
   PLAYER_SITES, STEAM_PROFILE, LOCK_PATH
 } from './feed-shared.js';
 
@@ -63,6 +63,7 @@ let cols = [];            // column elements inside the list; one in calm times
 let colSeq = [];          // per column: sequence number of its last arrival
 let seq = 0;
 let lastRetune = 0;
+let tempoCols = 1;        // reels the tempo asks for; shown count may be lower
 const arrivals = [];      // arrival times of live rows, for the tempo
 
 section.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(lang, el.dataset.i18n); });
@@ -365,22 +366,39 @@ function setColumns(n) {
   if (loaded && !reduce) animate(list, [{ opacity: 0.35 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' });
 }
 
-// Pick the reel count from the recent arrival rate. Never while the reader
-// holds the list; a filter always means one reel (few rows, easy to scan).
-function retune(force) {
-  if (!loaded || paused) return;
+// The tempo picks how many reels it wants (at most one change a minute,
+// never while the reader holds the list). What is shown also depends on the
+// filter and the width, and follows those at once.
+function retune() {
+  if (!loaded) return;
   const now = Date.now();
   while (arrivals.length && now - arrivals[0] > TEMPO_WINDOW_MS) arrivals.shift();
-  const want = terms.length ? 1 : nextColumns(cols.length, tempoPerMin(arrivals, now), maxColumnsFor(list.clientWidth));
-  if (want === cols.length) return;
-  if (!force && now - lastRetune < RETUNE_MIN_MS) return;
-  lastRetune = now;
-  setColumns(want);
+  if (!paused && now - lastRetune >= RETUNE_MIN_MS) {
+    const want = nextColumns(tempoCols, tempoPerMin(arrivals, now), maxColumnsFor(list.clientWidth));
+    if (want !== tempoCols) {
+      tempoCols = want;
+      lastRetune = now;
+    }
+  }
+  applyColumns();
 }
 
-window.addEventListener('resize', () => {
-  if (cols.length > maxColumnsFor(list.clientWidth)) retune(true);
-});
+function applyColumns() {
+  const want = shownColumns(tempoCols, terms.length > 0, list.clientWidth);
+  if (want !== cols.length) setColumns(want);
+}
+
+// Column widths change with the window: re-check fades and the reel cap.
+let lastWidth = 0;
+function onResize() {
+  const width = list.clientWidth;
+  if (!loaded || width === lastWidth) return;
+  lastWidth = width;
+  applyColumns();
+  rows.forEach(r => { if (!r.hidden && !r._flap) fitName(r); });
+}
+if ('ResizeObserver' in window) new ResizeObserver(onResize).observe(list);
+else window.addEventListener('resize', onResize);
 
 // ---- drip ----
 
@@ -390,7 +408,7 @@ function enqueue(entries) {
     arrivals.push(now);
     (paused ? held : incoming).push(e);
   }
-  retune(false);
+  retune();
   if (paused) renderPill();
   else pump();
 }
@@ -515,13 +533,11 @@ pill.addEventListener('click', () => { hover = false; release(); });
 // ---- search ----
 
 function setQuery(q) {
-  const had = terms.length > 0;
   terms = splitTerms(q);
   rows.forEach(r => { if (!r._flap) paint(r); });
   layoutKey = '';
   layout();
-  if (terms.length && cols.length > 1) retune(true);
-  else if (had && !terms.length) { lastRetune = 0; retune(false); }
+  applyColumns();
 }
 
 let saved = new URLSearchParams(location.search).get('q');
@@ -624,7 +640,7 @@ setInterval(() => {
     if (r._meta.textContent !== text) r._meta.textContent = text;
   });
 }, 1000);
-setInterval(() => { if (loaded && !paused && !document.hidden) { trim(); layout(); retune(false); } }, 15000);
+setInterval(() => { if (loaded && !paused && !document.hidden) { trim(); layout(); retune(); } }, 15000);
 
 // The server pre-renders the rows and embeds the same snapshot: take it over
 // right away (identical markup, so nothing visibly changes), then go live.

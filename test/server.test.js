@@ -168,6 +168,13 @@ test('server: feed assets carry an ETag, revalidate, and answer 304 when unchang
     await first.text();
     const again = await fetch(`${app.base}/assets/feed-shared.js`, { headers: { 'if-none-match': etag } });
     assert.equal(again.status, 304);
+    for (const header of [`W/${etag}`, `"other", ${etag}`, '*']) {
+      const res = await fetch(`${app.base}/assets/feed-shared.js`, { headers: { 'if-none-match': header } });
+      assert.equal(res.status, 304, header);
+    }
+    const stale = await fetch(`${app.base}/assets/feed-shared.js`, { headers: { 'if-none-match': '"other"' } });
+    assert.equal(stale.status, 200);
+    await stale.text();
   } finally {
     await app.close();
   }

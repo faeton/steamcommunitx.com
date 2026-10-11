@@ -76,6 +76,13 @@ export async function writeWebResponse(response, req, res, { drainTimeoutMs = DR
   if (!res.destroyed && !res.writableEnded) res.end();
 }
 
+// If-None-Match uses weak comparison and may list several validators or "*".
+function matchesEtag(header, etag) {
+  if (!header) return false;
+  const opaque = tag => tag.trim().replace(/^W\//, '');
+  return header.split(',').some(tag => tag.trim() === '*' || opaque(tag) === etag);
+}
+
 // Feed modules are small; revalidating them on every page load (ETag + 304)
 // keeps the page and its scripts from different deploys apart.
 async function serveAsset(path, req, res) {
@@ -83,7 +90,7 @@ async function serveAsset(path, req, res) {
     const body = await readFile(ASSETS[path]);
     const etag = `"${createHash('sha256').update(body).digest('hex').slice(0, 16)}"`;
     const headers = { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', ETag: etag };
-    if (req.headers['if-none-match'] === etag) {
+    if (matchesEtag(req.headers['if-none-match'], etag)) {
       res.writeHead(304, headers).end();
       return;
     }
