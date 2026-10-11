@@ -26,10 +26,14 @@ function toWebRequest(req, url) {
   return new Request(url.href, { method: req.method, headers });
 }
 
-function waitDrain(res) {
+// Resolves on drain or close. If the peer stops reading for `timeoutMs`, the
+// socket is destroyed so a stalled client cannot pin memory or a stream slot.
+function waitDrain(res, timeoutMs) {
   if (res.destroyed || res.writableEnded) return Promise.resolve();
   return new Promise(resolve => {
+    const timer = setTimeout(() => res.destroy(), timeoutMs);
     const done = () => {
+      clearTimeout(timer);
       res.off('drain', done);
       res.off('close', done);
       resolve();
@@ -39,7 +43,9 @@ function waitDrain(res) {
   });
 }
 
-async function writeWebResponse(response, req, res) {
+const DRAIN_TIMEOUT_MS = 30_000;
+
+export async function writeWebResponse(response, req, res, { drainTimeoutMs = DRAIN_TIMEOUT_MS } = {}) {
   const headers = {};
   response.headers.forEach((value, name) => { headers[name] = value; });
   res.writeHead(response.status, headers);
@@ -56,12 +62,15 @@ async function writeWebResponse(response, req, res) {
       const { done, value } = await reader.read();
       if (done) break;
       // Respect socket backpressure; a stalled SSE client then fills its own
-      // bounded queue in SseHub and gets dropped.
-      if (!res.write(value)) await waitDrain(res);
+      // bounded queue in SseHub and gets dropped, or times out here.
+      if (!res.write(value)) await waitDrain(res, drainTimeoutMs);
       if (res.destroyed) break;
     }
   } catch {
-    // client went away or the stream was cancelled
+    // The client went away, or the body errored (e.g. SseHub evicted a lagging
+    // client): drop the connection rather than end it as if complete.
+    if (!res.destroyed) res.destroy();
+    return;
   }
   if (!res.destroyed && !res.writableEnded) res.end();
 }

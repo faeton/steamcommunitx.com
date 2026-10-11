@@ -100,3 +100,33 @@ test('server: SSE stream delivers a snapshot and closes cleanly on shutdown', as
   const end = await reader.read().catch(() => ({ done: true }));
   assert.equal(end.done, true);
 });
+
+import { EventEmitter } from 'node:events';
+import { writeWebResponse } from '../server.js';
+
+function fakeRes({ drains = false } = {}) {
+  const res = new EventEmitter();
+  Object.assign(res, {
+    destroyed: false, writableEnded: false, chunks: 0,
+    writeHead() {},
+    write() { this.chunks++; return drains; },
+    end() { this.writableEnded = true; },
+    destroy() { this.destroyed = true; this.emit('close'); }
+  });
+  return res;
+}
+
+test('writeWebResponse: a socket that never drains is destroyed after the timeout', async () => {
+  const body = new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(8)); } });
+  const res = fakeRes();
+  await writeWebResponse(new Response(body), { method: 'GET' }, res, { drainTimeoutMs: 20 });
+  assert.equal(res.destroyed, true);
+});
+
+test('writeWebResponse: a body stream that errors destroys the socket instead of ending it cleanly', async () => {
+  const body = new ReadableStream({ start(c) { c.error(new Error('SSE client lagging')); } });
+  const res = fakeRes({ drains: true });
+  await writeWebResponse(new Response(body), { method: 'GET' }, res);
+  assert.equal(res.destroyed, true);
+  assert.equal(res.writableEnded, false);
+});

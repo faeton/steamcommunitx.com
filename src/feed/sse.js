@@ -65,7 +65,9 @@ export class SseHub {
     for (const c of this.clients) {
       try {
         if (c.desiredSize !== null && c.desiredSize <= 0) {
-          c.close(); // lagging client: it will reconnect and get a fresh snapshot
+          // Lagging client: error() drops its queued frames and makes the adapter
+          // tear the socket down; the browser reconnects and gets a fresh snapshot.
+          c.error(new Error('SSE client lagging'));
           this.remove(c);
           continue;
         }

@@ -191,3 +191,11 @@ test('health: queue depth and last tick', async () => {
   assert.equal(feed.health().pending, 0);
   assert.equal(typeof feed.health().lastTickAt, 'number');
 });
+
+test('SseHub: an evicted lagging client loses its buffered frames (stream errors)', async () => {
+  const hub = new SseHub();
+  const res = hub.connect({});
+  for (let i = 0; i < 100; i++) hub.broadcast('entries', { i });
+  assert.equal(hub.size, 0);
+  await assert.rejects(res.body.getReader().read(), /lagging/);
+});
