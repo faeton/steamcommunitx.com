@@ -3231,7 +3231,7 @@ All notable changes to this project are documented here. The format is based on
 
 - [ ] **Step 4: Verify no private infrastructure leaked**
 
-Run `git grep -nIiE "<pattern>"` with the deployment's private host and server names (kept outside the repo).
+Run `git grep -nIiE '<pattern>'` with the deployment's private host and server names (kept outside the repo).
 Expected: no output.
 
 Run: `npm test` — Expected: PASS.

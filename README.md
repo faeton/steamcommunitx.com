@@ -1,7 +1,7 @@
 # Steam to Dotabuff Redirector
 
 ## Overview
-This Cloudflare Worker-based service allows users to convert Steam Vanity URLs and SteamID-based profile URLs into Dotabuff player profile links. It automatically handles Steam Vanity URLs by resolving them through the Steam API and processes SteamID64 and Steam3 formats locally without API calls.
+This service converts Steam Vanity URLs and SteamID-based profile URLs into Dotabuff player profile links. It runs either as a **Cloudflare Worker** (`worker.js`) or as a **self-hosted Node server** (`server.js`, Docker image provided). Both share one request handler (`src/core.js`). The self-hosted server additionally runs the optional **recent checks feed**.
 
 ## Features
 - **Supports Steam Vanity URLs** (e.g., `steamcommunity.com/id/gabelogannewell` → API resolution required)
@@ -10,6 +10,7 @@ This Cloudflare Worker-based service allows users to convert Steam Vanity URLs a
 - **Google Analytics Integration** (ensuring tracking before redirection)
 - **Cloudflare Workers Optimization**
 - **Secure API Key Handling** using Cloudflare Worker Secrets
+- **Recent checks feed** (self-hosted only): live list of recently checked players on the home page, plus a teaser on the redirect page
 
 ## How It Works
 1. **Vanity URLs**: If a user enters a Steam Vanity URL (`/id/{username}`), the service queries the Steam API to resolve the corresponding SteamID64.
@@ -30,7 +31,7 @@ https://www.dotabuff.com/players/{dotaID}
 ## Setup & Deployment
 ### 1. Deploy to Cloudflare Workers
 - Clone the repository and navigate to the project folder.
-- Deploy the worker using Cloudflare’s dashboard or Wrangler CLI.
+- Deploy the worker using Cloudflare’s dashboard or Wrangler CLI. The Worker build bundles `src/` automatically; the feed is not available on Workers.
 
 ### 2. Set Up Secrets and Variables
 Go to Cloudflare Dashboard → Workers & Pages → Select Your Worker → **Settings** → **Variables and Secrets**.
@@ -73,7 +74,12 @@ To use a custom domain like `steamcommunitx.com`, configure Cloudflare DNS setti
 
 ## Code Breakdown
 ### Key Files:
-- **`worker.js`**: The main Cloudflare Worker script that handles requests, processes Steam IDs, and redirects.
+- **`src/core.js`**: request routing, Steam ID resolution and conversion, `handleRequest(request, env, ctx)` — Web-standard APIs only.
+- **`src/pages.js`**: HTML for the home, redirect and error pages.
+- **`worker.js`**: Cloudflare Workers adapter.
+- **`server.js`**: Node adapter (SQLite instead of KV, in-process feed, `/healthz`).
+- **`src/feed/`**: recent checks feed (storage, Steam enrichment, SSE).
+- **`src/client/`**: browser feed UI and helpers shared with the server.
 - **`README.md`**: This doc.
 
 > The original 2017 PHP prototype is preserved on the [`legacy-php-2017`](https://github.com/faeton/steamcommunitx.com/tree/legacy-php-2017) branch for historical reference.
@@ -82,6 +88,37 @@ To use a custom domain like `steamcommunitx.com`, configure Cloudflare DNS setti
 - Uses `window.onload` to ensure all tracking scripts load before redirecting.
 - Redirects both SteamID-based URLs and Vanity URLs to Dotabuff.
 - Implements proper error handling for missing API keys and invalid Steam IDs.
+
+## Self-hosting (Node / Docker)
+
+Requires Node 24+ or Docker.
+
+1. `cp .env.example .env` and set at least `STEAM_API_KEY`.
+2. `cp docker-compose.example.yml docker-compose.yml`, then `mkdir -p data config && sudo chown 1000:1000 data`.
+3. `docker compose up -d --build`. The server listens on `127.0.0.1:8787`; `GET /healthz` returns `{"ok":true,…}`.
+4. Put a TLS reverse proxy in front — see `deploy/Caddyfile.example`. Recommended setup with Cloudflare:
+   - DNS record **proxied** (orange cloud).
+   - SSL/TLS mode **Full (strict)** for the hostname (a Configuration Rule can scope it to one hostname). *Flexible* causes a redirect loop.
+   - A Cloudflare **Origin CA** certificate on the proxy, and only Cloudflare IP ranges allowed through.
+5. Point an uptime monitor at `/healthz`.
+
+Without Docker: `npm start` (reads the same variables from the environment).
+
+### Switching between the Worker and the server
+
+A Worker route on the zone takes precedence over the origin. To serve the site from the self-hosted server, remove the Worker route (Workers & Pages → the worker → Settings → Domains & Routes). **Rolling back is `wrangler deploy`**, which re-creates the route from `wrangler.toml` — note that any Worker deploy does this, so deploy the Worker only when you intend to switch back. The Worker runs without the feed; everything else is identical.
+
+## Recent checks feed (optional, self-hosted only)
+
+When the server runs with `FEED_ENABLED=1` (default), every real-browser redirect records a *check* of that profile (link-preview bots and crawlers are ignored). Every 30 seconds the queued SteamIDs are enriched with nickname and avatar via `ISteamUser/GetPlayerSummaries` (up to 100 per call, cached for 6 hours). The home page then shows a live list of players checked in the last hour, and the redirect page shows a one-line teaser.
+
+Privacy and moderation:
+- Only the **checked profile** is shown, never who checked it. IP addresses are never stored (rate limiting uses a daily-salted hash kept in memory).
+- Only public Steam data is shown: persona name and avatar. Steam publishes these even for private profiles, so private profiles are listed too, marked with a small lock. Accounts Steam does not return (deleted or invalid) are never shown.
+- Raw checks are kept for 24 hours, player names/avatars for 7 days after the last check.
+- Nicknames are cleaned (control/bidi characters, excessive combining marks, length) and words listed in `BLOCKED_WORDS_FILE` are masked. After editing the file, send `SIGHUP` (`docker kill -s HUP <container>`); new and refreshed names use the new list.
+
+Endpoints: `GET /api/recent.json` (snapshot, cacheable for 10 s), `GET /api/stream` (Server-Sent Events), `GET /healthz`.
 
 ## Contributing
 Feel free to submit pull requests for improvements, bug fixes, or additional features.

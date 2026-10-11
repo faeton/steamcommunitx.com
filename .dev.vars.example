@@ -10,3 +10,6 @@ BANNERS=[{"src":"https://example.com/embed/a","height":300},{"src":"https://exam
 
 MATOMO_URL=//m.example.com/
 MATOMO_SITE_ID=1
+
+# The recent checks feed is not available on the Worker runtime; see
+# .env.example and "Self-hosting" in the README for the Node server.
