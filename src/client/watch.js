@@ -219,6 +219,7 @@ function schedule(ms) {
 }
 
 const LIMITED = 'limited';
+const STEAM_DOWN = 'down';
 
 async function resolve(name) {
   const ctl = 'AbortController' in window ? new AbortController() : null;
@@ -226,13 +227,20 @@ async function resolve(name) {
   try {
     const res = await fetch('/api/resolve.json?v=' + encodeURIComponent(name), { cache: 'no-store', signal: ctl && ctl.signal });
     if (res.status === 429) return LIMITED;
+    if (res.status >= 500) return STEAM_DOWN;
     if (!res.ok) return null;
     return parseCheckList(String((await res.json()).dotaId))[0] || null;
   } catch {
-    return null; // offline or timed out
+    return STEAM_DOWN; // offline or timed out
   } finally {
     clearTimeout(killer);
   }
+}
+
+function message(key) {
+  const el = $('watch-msg');
+  el.hidden = !key;
+  el.textContent = key ? t(lang, key) : '';
 }
 
 // ---- signals ----
@@ -284,6 +292,9 @@ function wire() {
     const tokens = input.value.slice(0, 1024).split(/[\s,;]+/).filter(Boolean);
     const added = [];
     const gen = listGen;
+    let problem = null;          // why a name was not added, worst first
+    message(null);
+    input.removeAttribute('aria-invalid');
     // Ids and id URLs parse locally; /id/<name> links and bare names ask the
     // server (one Steam lookup each, at most MAX_WATCH per add), in input order.
     input.disabled = true;
@@ -297,22 +308,30 @@ function wire() {
         if (!name || names.has(name.toLowerCase()) || names.size >= MAX_WATCH) continue;
         names.add(name.toLowerCase());
         const id = await resolve(name);
-        if (id === LIMITED) break;
-        if (id) added.push(id);
+        if (id === LIMITED) { problem = 'watchLimited'; break; }
+        if (id === STEAM_DOWN) problem = problem || 'watchSteamDown';
+        else if (id) added.push(id);
+        else problem = problem || 'watchNotFound';
       }
     } finally {
       input.disabled = false;
     }
     // The list was cleared or edited meanwhile: that edit wins.
     if (gen !== listGen) return;
-    if (!added.length) { input.setAttribute('aria-invalid', 'true'); input.focus(); return; }
+    // A busy limit or Steam outage is not the visitor's typo: say so instead.
+    message(problem);
+    if (!added.length) {
+      if (!problem || problem === 'watchNotFound') input.setAttribute('aria-invalid', 'true');
+      input.focus();
+      return;
+    }
     input.removeAttribute('aria-invalid');
     input.value = '';
     input.focus();
     const next = parseCheckList([...list, ...added]);
     if (next.join(',') !== list.join(',')) { setList(next); refresh(); }
   });
-  $('watch-in').addEventListener('input', ev => ev.target.removeAttribute('aria-invalid'));
+  $('watch-in').addEventListener('input', ev => { ev.target.removeAttribute('aria-invalid'); message(null); });
   $('watch-list').addEventListener('click', ev => {
     const x = ev.target.closest('.wt-x');
     if (!x) return;

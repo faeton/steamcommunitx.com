@@ -310,10 +310,22 @@ function lookupVanity(name, env) {
 async function resolveVanity(request, env) {
   const name = vanityName(new URL(request.url).searchParams.get('v'));
   if (!name) return jsonResponse({ error: 'not a vanity name' }, 400);
+  const key = name.toLowerCase();
+  // Known names and recent misses answer from the caches without spending the
+  // lookup budget; only a real Steam call counts against it.
+  let steamId64 = null;
+  const missUntil = resolveMisses.get(key);
+  const known = missUntil && missUntil > Date.now();
+  if (!known) {
+    try { steamId64 = env.STEAM_ID_CACHE ? await env.STEAM_ID_CACHE.get(`steamid:${key}`) : null; } catch { steamId64 = null; }
+  }
+  if (known || steamId64) {
+    const dotaId = steamId64 ? convertToDota2Id(steamId64) : null;
+    return dotaId ? jsonResponse({ dotaId: String(dotaId) }) : jsonResponse({ error: 'no match' }, 404);
+  }
   if (!env.FEED.allowResolve(request.headers.get('cf-connecting-ip') || '')) {
     return jsonResponse({ error: 'too many requests' }, 429, { 'Retry-After': '60' });
   }
-  let steamId64;
   try {
     steamId64 = await lookupVanity(name, env);
   } catch (e) {

@@ -9,7 +9,9 @@ All notable changes to this project are documented here. The format is based on
 - Watchlist box accepts vanity links (`/id/name` on this site or Steam) and
   bare vanity names, resolved via `GET /api/resolve.json` (one Steam lookup
   per add, 10 per minute per IP and 60 per minute in total; misses are
-  remembered for 10 minutes and concurrent lookups of one name share a call).
+  remembered for 10 minutes and concurrent lookups of one name share a call;
+  known names and misses answer from the cache without spending the budget,
+  and a busy limit or Steam outage gets its own message instead of "not found").
 
 ### Fixed
 - Profile URLs with a SteamID3 (`/profiles/[U:1:x]`) are accepted.

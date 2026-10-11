@@ -492,3 +492,23 @@ test('/api/resolve.json: concurrent lookups of one name share a Steam call; miss
     globalThis.fetch = realFetch;
   }
 });
+
+test('/api/resolve.json: cached names and cached misses never spend the lookup budget', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async url => Response.json({ response: new URL(url).searchParams.get('vanityurl') === 'budgetname' ? { success: 1, steamid: '76561198123456789' } : { success: 42 } });
+  const store = new Map();
+  const kv = { async get(k) { return store.get(k) ?? null; }, async put(k, v) { store.set(k, v); } };
+  let budget = 2;
+  const env = { STEAM_API_KEY: 'k', STEAM_ID_CACHE: kv, FEED: { ...fakeFeed(), allowResolve: () => budget-- > 0 } };
+  const req = q => new Request(`https://example.com/api/resolve.json?v=${q}`);
+  try {
+    assert.equal((await handleRequest(req('budgetname'), env, ctx)).status, 200);
+    assert.equal((await handleRequest(req('budgetmiss'), env, ctx)).status, 404);
+    // Budget is now spent, yet both answers still come from the caches.
+    assert.equal((await handleRequest(req('budgetname'), env, ctx)).status, 200);
+    assert.equal((await handleRequest(req('BudgetMiss'), env, ctx)).status, 404);
+    assert.equal((await handleRequest(req('newname'), env, ctx)).status, 429);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

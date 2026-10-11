@@ -190,6 +190,7 @@ export function renderWatchBlock(list = [], watch = null, lang = 'en', now = Dat
         <input id="watch-in" type="text" autocomplete="off" spellcheck="false" placeholder="${tr('watchPlaceholder')}" aria-label="${tr('watchPlaceholder')}">
         <button class="wt-btn" type="submit">${tr('watchAdd')}</button>
       </form>
+      <p class="wt-msg" id="watch-msg" aria-live="polite" hidden></p>
       <script type="application/json" id="check-data">${data}</script>
     </section>`;
 }
@@ -223,6 +224,7 @@ const WATCH_CSS = `
     }
     .wt-add input:focus { border-color: var(--accent); }
     .wt-full .wt-add { display: none; }
+    .wt-msg { margin: -4px 0 0; padding: 0 16px 12px; font-size: 13px; color: var(--gold); }
     .fd-row.fd-watched { box-shadow: inset 3px 0 0 var(--gold); background: rgba(245,196,81,0.06); }
     @media (prefers-reduced-motion: reduce) { .wt-row.wt-new { animation: none; } }`;
 

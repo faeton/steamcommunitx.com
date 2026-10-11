@@ -59,7 +59,10 @@ const DICT = {
     watchBell: 'Sound and notification on new checks',
     watchChecked: 'checked {ago}',
     watchNone: 'no checks recorded in 24 h',
-    watchNotify: '{name} was just checked'
+    watchNotify: '{name} was just checked',
+    watchNotFound: 'No Steam profile with that name.',
+    watchLimited: 'Too many name lookups right now — try again in a minute, or paste a Dota ID or profile link.',
+    watchSteamDown: 'Steam is not answering right now — try again later, or paste a Dota ID.'
   },
   ru: {
     feedTitle: 'Кого сейчас проверяют',
@@ -96,7 +99,10 @@ const DICT = {
     watchBell: 'Звук и уведомление о новых проверках',
     watchChecked: 'проверяли {ago}',
     watchNone: 'проверок за 24 ч не записано',
-    watchNotify: '{name} только что проверили'
+    watchNotify: '{name} только что проверили',
+    watchNotFound: 'Профиля Steam с таким именем нет.',
+    watchLimited: 'Сейчас слишком много запросов имён — попробуй через минуту или вставь Dota ID или ссылку на профиль.',
+    watchSteamDown: 'Steam сейчас не отвечает — попробуй позже или вставь Dota ID.'
   },
   uk: {
     feedTitle: 'Кого зараз перевіряють',
@@ -133,7 +139,10 @@ const DICT = {
     watchBell: 'Звук і сповіщення про нові перевірки',
     watchChecked: 'перевіряли {ago}',
     watchNone: 'перевірок за 24 год не записано',
-    watchNotify: '{name} щойно перевірили'
+    watchNotify: '{name} щойно перевірили',
+    watchNotFound: 'Профілю Steam з таким іменем немає.',
+    watchLimited: 'Зараз забагато запитів імен — спробуй за хвилину або встав Dota ID чи посилання на профіль.',
+    watchSteamDown: 'Steam зараз не відповідає — спробуй пізніше або встав Dota ID.'
   }
 };
 
