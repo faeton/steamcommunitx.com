@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   avatarUrl, pickLang, t, ago, splitTerms, matchesTerms, highlightRanges,
   timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, isStale, insertIndex,
-  tempoPerMin, nextColumns, maxColumnsFor, pickColumn, metaLine, matchesEntry, shownColumns
+  tempoPerMin, nextColumns, maxColumnsFor, pickColumn, metaLine, matchesEntry, shownColumns, foldQueue
 } from '../src/client/feed-shared.js';
 
 const HASH = 'fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb';
@@ -115,21 +115,23 @@ test('tempoPerMin: arrivals in the last 2 minutes, per minute', () => {
   const times = [now - 130_000, now - 100_000, now - 50_000, now - 10_000, now - 1000];
   assert.equal(tempoPerMin(times, now), 2); // 4 in 2 min
   assert.equal(tempoPerMin([], now), 0);
+  // Unsorted times (lastTs of catch-up rows) are fine; old ones do not count.
+  assert.equal(tempoPerMin([now - 1000, now - 500_000, now - 2000], now), 1);
 });
 
 test('nextColumns: up at 20 / 45 per min, down below 12 / 30 (hysteresis), capped', () => {
   assert.equal(nextColumns(1, 19, 3), 1);
   assert.equal(nextColumns(1, 20, 3), 2);
-  assert.equal(nextColumns(1, 50, 3), 3);
+  assert.equal(nextColumns(1, 50, 3), 2); // one step per retune
   assert.equal(nextColumns(2, 44, 3), 2);
   assert.equal(nextColumns(2, 45, 3), 3);
   assert.equal(nextColumns(3, 31, 3), 3);
   assert.equal(nextColumns(3, 29, 3), 2);
-  assert.equal(nextColumns(3, 5, 3), 1);
+  assert.equal(nextColumns(3, 5, 3), 2);
   assert.equal(nextColumns(2, 13, 3), 2);
   assert.equal(nextColumns(2, 11, 3), 1);
   assert.equal(nextColumns(1, 80, 2), 2);
-  assert.equal(nextColumns(3, 80, 1), 1);
+  assert.equal(nextColumns(3, 80, 1), 1); // the width cap still applies at once
 });
 
 test('maxColumnsFor: by list width', () => {
@@ -168,4 +170,15 @@ test('shownColumns: a filter always shows one reel; otherwise the tempo choice, 
   assert.equal(shownColumns(3, false, 720), 3);
   assert.equal(shownColumns(3, false, 600), 2);
   assert.equal(shownColumns(2, false, 380), 1);
+});
+
+test('foldQueue: one newest entry per player, oldest first, capped', () => {
+  const q = [
+    { steamId64: 'a', lastTs: 1, count: 1 },
+    { steamId64: 'b', lastTs: 2, count: 1 },
+    { steamId64: 'a', lastTs: 3, count: 2 },
+    { steamId64: 'c', lastTs: 4, count: 1 }
+  ];
+  assert.deepEqual(foldQueue(q, 10).map(e => [e.steamId64, e.lastTs]), [['b', 2], ['a', 3], ['c', 4]]);
+  assert.deepEqual(foldQueue(q, 2).map(e => e.steamId64), ['a', 'c']); // newest kept
 });
