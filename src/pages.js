@@ -141,13 +141,14 @@ const FEED_CSS = `
     .fd-lock svg { width: 8px; height: 8px; display: block; }
     .fd-who { flex: 1; min-width: 0; }
     .fd-nick { font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; unicode-bidi: isolate; }
-    .fd-nick mark { background: rgba(102,192,244,0.25); color: var(--text); border-radius: 3px; padding: 0 1px; }
+    .fd-nick mark, .fd-flap.fd-hl { background: rgba(102,192,244,0.25); color: var(--text); border-radius: 3px; }
     .fd-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
     .fd-x { font-size: 11px; font-weight: 700; color: var(--gold); background: rgba(245,196,81,0.12); border-radius: 6px; padding: 1px 6px; margin-left: 6px; }
     .fd-go { color: var(--accent); font-size: 13px; font-weight: 600; white-space: nowrap; }
     .fd-empty { padding: 24px 16px; color: var(--muted); text-align: center; font-size: 14px; }
-    .fd-flap { display: inline-block; min-width: 0.55em; text-align: center; }
-    .fd-flap.spin { color: var(--accent); }
+    .fd-flap { display: inline-block; position: relative; white-space: pre; }
+    .fd-flap.spin .fd-g { visibility: hidden; }
+    .fd-spin { position: absolute; left: 50%; top: 0; transform: translateX(-50%); color: var(--accent); }
     .fd-flip { animation: fd-flip .45s cubic-bezier(.3,1.4,.5,1); transform-origin: top; }
     @keyframes fd-flip { from { transform: rotateX(-90deg); } to { transform: rotateX(0); } }
     @keyframes fd-flash { from { background: rgba(245,196,81,0.2); } to { background: transparent; } }

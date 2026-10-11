@@ -64,6 +64,18 @@ function animate(el, keyframes, options) {
 
 // ---- rows ----
 
+function countBadge(count) {
+  const x = document.createElement('span');
+  x.className = 'fd-x';
+  x.textContent = '×' + count;
+  return x;
+}
+
+const segmenter = typeof Intl !== 'undefined' && Intl.Segmenter ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
+function graphemes(s) {
+  return segmenter ? Array.from(segmenter.segment(s), g => g.segment) : Array.from(s);
+}
+
 function paint(r) {
   const e = r._e;
   const nick = r._nick;
@@ -78,12 +90,7 @@ function paint(r) {
     pos = b;
   }
   nick.append(e.name.slice(pos));
-  if (e.count > 1) {
-    const x = document.createElement('span');
-    x.className = 'fd-x';
-    x.textContent = '×' + e.count;
-    nick.append(x);
-  }
+  if (e.count > 1) nick.append(countBadge(e.count));
   r._meta.textContent = ago(lang, e.lastTs, Date.now());
   r.hidden = !matchesTerms(e.name, terms);
 }
@@ -147,40 +154,59 @@ function dropRow(r) {
 }
 
 // One interval per row drives every glyph; it stops when done or when the
-// row is dropped. Screen readers get the real name via aria-label.
+// row is dropped. Each cell already holds its final grapheme (hidden while
+// spinning, so the cell has its final width) with the random glyph drawn on
+// top, and the highlight and ×N badge are there from the start: the swap to
+// plain text at the end changes nothing visible. Screen readers get the real
+// name via aria-label.
 function flap(r) {
-  const name = r._e.name;
-  const chars = Array.from(name);
+  const e = r._e;
   const nick = r._nick;
-  nick.setAttribute('aria-label', name);
+  const ranges = highlightRanges(e.name, terms);
+  nick.setAttribute('aria-label', e.name);
   nick.textContent = '';
-  const spans = chars.map(c => {
-    const s = document.createElement('span');
-    s.className = 'fd-flap spin';
-    s.setAttribute('aria-hidden', 'true');
-    s.textContent = c === ' ' ? ' ' : GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
-    nick.append(s);
-    return s;
+  let offset = 0;
+  const cells = graphemes(e.name).map(g => {
+    const start = offset;
+    offset += g.length;
+    const cell = document.createElement('span');
+    cell.className = 'fd-flap';
+    cell.setAttribute('aria-hidden', 'true');
+    if (ranges.some(([a, b]) => start >= a && start < b)) cell.classList.add('fd-hl');
+    const final = document.createElement('span');
+    final.className = 'fd-g';
+    final.textContent = g;
+    cell.append(final);
+    if (/\S/.test(g)) {
+      cell.classList.add('spin');
+      cell._spin = document.createElement('span');
+      cell._spin.className = 'fd-spin';
+      cell._spin.textContent = GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
+      cell.append(cell._spin);
+    }
+    nick.append(cell);
+    return cell;
   });
-  const lastTick = 4 + (chars.length - 1) * 2;
+  if (e.count > 1) nick.append(countBadge(e.count));
+  const lastTick = 4 + (cells.length - 1) * 2;
   let tick = 0;
   r._flap = setInterval(() => {
     tick++;
-    spans.forEach((s, i) => {
-      if (s._done) return;
-      if (chars[i] === ' ' || tick >= 4 + i * 2) {
-        s._done = true;
-        s.textContent = chars[i];
-        s.classList.remove('spin');
-        s.classList.add('fd-flip');
+    cells.forEach((cell, i) => {
+      if (!cell._spin) return;
+      if (tick >= 4 + i * 2) {
+        cell._spin.remove();
+        cell._spin = null;
+        cell.classList.remove('spin');
+        cell.classList.add('fd-flip');
       } else {
-        s.textContent = GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
+        cell._spin.textContent = GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
       }
     });
     if (tick >= lastTick) {
       clearInterval(r._flap);
       r._flap = null;
-      setTimeout(() => { if (r.isConnected) paint(r); }, 450);
+      setTimeout(() => { if (r.isConnected && !r._flap) paint(r); }, 450);
     }
   }, FLAP_TICK_MS);
   r.firstChild.classList.add('fd-flip');
