@@ -3,15 +3,20 @@
 All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.5.2] - 2026-10-11
+
+### Fixed
+- Watchlist name lookups: known names and recent misses answer from the cache
+  without spending the lookup budget, and a busy limit or a Steam outage gets
+  its own message instead of looking like "no such name".
+
 ## [2.5.1] - 2026-10-11
 
 ### Added
 - Watchlist box accepts vanity links (`/id/name` on this site or Steam) and
   bare vanity names, resolved via `GET /api/resolve.json` (one Steam lookup
   per add, 10 per minute per IP and 60 per minute in total; misses are
-  remembered for 10 minutes and concurrent lookups of one name share a call;
-  known names and misses answer from the cache without spending the budget,
-  and a busy limit or Steam outage gets its own message instead of "not found").
+  remembered for 10 minutes and concurrent lookups of one name share a call).
 
 ### Fixed
 - Profile URLs with a SteamID3 (`/profiles/[U:1:x]`) are accepted.
