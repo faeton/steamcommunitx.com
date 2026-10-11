@@ -157,10 +157,12 @@ const FEED_CSS = `
     /* Small "D" tile linking to Dotabuff: fits even three columns. */
     .fd-go {
       flex: none; width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center;
-      background: rgba(102,192,244,0.1); border: 1px solid rgba(102,192,244,0.3); color: var(--accent);
-      font-size: 13px; font-weight: 800; line-height: 1; text-decoration: none;
+      background: var(--db-red); color: #fff;
+      font-size: 14px; font-weight: 800; line-height: 1; text-decoration: none;
+      transition: background .15s, transform .15s;
     }
-    .fd-go:hover, .fd-go:focus-visible { background: var(--accent); border-color: var(--accent); color: var(--bg); text-decoration: none; }
+    .fd-go:hover, .fd-go:focus-visible { background: var(--db-red-hi); color: #fff; text-decoration: none; transform: scale(1.08); }
+    .fd-go:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
     .fd-empty { padding: 24px 16px; color: var(--muted); text-align: center; font-size: 14px; }
     .fd-flap { display: inline-block; position: relative; white-space: pre; }
     .fd-flap.spin { clip-path: inset(0); } /* random glyphs stay inside their cell; unlike overflow, keeps the baseline */
@@ -217,6 +219,8 @@ export function indexPage(hostname, analytics = '', opts = {}) {
       --accent: #66c0f4;
       --accent-2: #4aa3d9;
       --gold: #f5c451;
+      --db-red: #c23c2a;      /* Dotabuff's brand red, for the D tile */
+      --db-red-hi: #de4a35;
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; }
