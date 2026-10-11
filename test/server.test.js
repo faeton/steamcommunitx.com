@@ -151,3 +151,9 @@ test('server: close() is bounded even when a request is stuck on Steam', async (
     globalThis.fetch = realFetch;
   }
 });
+
+test('server: close() is idempotent (a second signal does not close SQLite twice)', async () => {
+  const app = await boot({ STEAM_API_KEY: 'k' });
+  await Promise.all([app.close(), app.close()]);
+  await app.close();
+});

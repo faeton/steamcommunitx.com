@@ -143,7 +143,13 @@ export function createServer({ env = process.env, dbPath = env.DB_PATH || './dat
   // waits for a running tick) while in-flight requests finish. Everything
   // shares one deadline: a request stuck on Steam must not hold the process
   // up. Leftover sockets are then dropped and SQLite is closed.
-  async function close() {
+  let closing = null;
+  function close() {
+    closing ??= shutdown();
+    return closing;
+  }
+
+  async function shutdown() {
     const sleep = ms => new Promise(r => setTimeout(r, ms).unref());
     const closed = new Promise(r => server.close(() => r()));
     server.closeIdleConnections?.();
