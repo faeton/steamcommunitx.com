@@ -29,7 +29,16 @@
 2. **Steam API down or no keys** — redirects for `/profiles/…` must still work, queued ids must stay pending and be retried with backoff, nothing crashes. Pinned in Task 5 (failure keeps pending + backoff) and Task 7 (server serves redirects with a failing Steam fetch).
 3. **Feed disabled** (Worker, or `FEED_ENABLED=0`) — `/api/*` returns today's 404 page, home has no feed section, redirect keeps `max-age=300`, `/healthz` on the server still answers. Pinned in Task 2 and Task 7.
 4. **Hostile nicknames** (bidi overrides, zalgo, control chars, `<script>` text, blocked words) — sanitised server-side and still rendered as inert text. Pinned in Task 3 (sanitiser) and Task 6 (stored name is sanitised; `<script>` survives as literal text in JSON, never as HTML).
-5. **Opted-out / private players** must not leak through any path: not in `/api/recent.json`, not in SSE broadcasts, not in the teaser's "seen" line. Pinned in Task 6.
+5. **Accounts Steam did not return** (deleted / invalid) must not appear anywhere: not in `/api/recent.json`, SSE or the teaser's "seen" line. Private profiles *are* shown, flagged `private: true`. Pinned in Task 6.
+
+## Amendment (2026-10-11): no opt-out, private profiles shown
+
+Decided after the plan was written; it overrides the code below wherever they differ.
+
+- **No opt-out list.** Drop `HIDDEN_IDS_FILE`, `loadIds`, the `hidden` set and the hidden-id tests. `reloadLists()` (SIGHUP) only re-reads `BLOCKED_WORDS_FILE` and broadcasts nothing.
+- **`players` columns:** `found INTEGER` (Steam returned the player) replaces `visible`; new `private INTEGER` (`communityvisibilitystate !== 3`). `recent`, `hourCount` and the teaser's `seen` require `found = 1` only.
+- **Entries** gain `private: boolean`. The browser row shows a small lock badge on the avatar (`title`: "Private Steam profile", i18n key `privateProfile`).
+- **Removals** (`onEntries(ids, removed)` → snapshot) now only cover players that were found before and Steam no longer returns.
 
 ---
 

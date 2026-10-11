@@ -15,7 +15,8 @@ Measured today: ~30–41k requests/day for this site, Saturday peak hour ≈ 4.6
 
 ## Non-goals (v1)
 
-- Accounts or Steam login (owner-verified opt-out comes later if needed).
+- Accounts or Steam login.
+- Opt-out lists. Persona name and avatar are public Steam data; every checked profile Steam returns is shown.
 - Ranks, medals or match data beyond Steam persona name and avatar.
 - Showing *who* checked a profile. Only the checked profile is ever shown.
 - The feed on the Worker runtime (no Durable Object or hybrid ingest; see Later).
@@ -77,14 +78,14 @@ Mostly a move of today's `worker.js` logic, with these changes:
 ## Component 2 — Feed module (`src/feed/`, Node only)
 
 - **Stack:** Node 24 built-ins only (`node:sqlite`, `node:http` via the adapter, `fetch`). Zero runtime dependencies.
-- **Config (env):** `STEAM_API_KEY` / `STEAM_API_KEYS` (shared with core), `DB_PATH`, optional `BLOCKED_WORDS_FILE`, optional `HIDDEN_IDS_FILE`.
+- **Config (env):** `STEAM_API_KEY` / `STEAM_API_KEYS` (shared with core), `DB_PATH`, optional `BLOCKED_WORDS_FILE` (re-read on `SIGHUP`).
 - **SQLite only.** At this volume (~40k checks/day) indexed SQLite queries (WAL mode) are fast enough, so there is no separate in-memory cache, and a restart loses nothing.
 
 ### Data model (SQLite)
 
 ```sql
 pending (steamid TEXT PRIMARY KEY, first_ts INTEGER, last_ts INTEGER, hits INTEGER)
-players (steamid TEXT PRIMARY KEY, name TEXT, avatar_hash TEXT, visible INTEGER, fetched_at INTEGER)
+players (steamid TEXT PRIMARY KEY, name TEXT, avatar_hash TEXT, found INTEGER, private INTEGER, fetched_at INTEGER)
 checks  (steamid TEXT, ts INTEGER)            -- one row per accepted hit; purged after 24 h
 kv      (key TEXT PRIMARY KEY, value TEXT, expires_at INTEGER)  -- KV shim for core
 CREATE INDEX checks_ts ON checks(ts);
@@ -94,25 +95,25 @@ CREATE INDEX checks_ts ON checks(ts);
 
 - Validates the SteamID64.
 - Rate limits: ≤ 20 hits/min per `ipHash` and ≤ 6 hits/min per steamid, and no new hits while ≥ 5,000 ids are waiting for enrichment. Excess is silently dropped.
-- `hourCount` counts only checks of shown players (visible and not opted out), so it cannot reveal private or hidden ones.
+- `hourCount` counts checks of players the feed can show (enriched and returned by Steam), so it matches the list.
 - Appends to `checks` and upserts `pending`.
 
 ### Enrichment tick (every 30 s, only when `pending` is non-empty)
 
 - Takes up to 500 pending ids (5 sequential chunks of 100) and skips ids whose player row is under 6 h old.
 - Calls `ISteamUser/GetPlayerSummaries/v2` with a 5 s timeout per call, reusing the core's key rotation and health marking.
-- Upserts `players`. `visible = communityvisibilitystate === 3`.
+- Upserts `players`. `found = 1` when Steam returned the player (0 for deleted or invalid accounts, which are never shown); `private = communityvisibilitystate !== 3`. Private profiles are shown like any other, with a small lock marker: their persona name and avatar are public on Steam anyway.
 - Removes the processed ids from `pending` in the same transaction.
 - On Steam failure, the ids stay pending and the tick backs off: 30 s → 60 s → 120 s, capped at 5 min.
-- Broadcasts newly visible entries to SSE clients.
+- Broadcasts new or updated entries to SSE clients.
 
 ### HTTP
 
 Same origin as the site, so no CORS.
 
 - `GET /api/recent.json` → `{ hourCount, generatedAt, entries }`.
-  - `entries` holds the latest 200 distinct visible, non-hidden players from the last 60 min, ordered by last check desc.
-  - Each entry: `{ steamId64, dotaId, name, avatarHash, lastTs, count }`.
+  - `entries` holds the latest 200 distinct found players from the last 60 min, ordered by last check desc.
+  - Each entry: `{ steamId64, dotaId, name, avatarHash, private, lastTs, count }`.
   - Sent with `Cache-Control: public, max-age=10`, so a Cloudflare cache rule can absorb polling.
 - `GET /api/stream` (SSE):
   - On connect it sends `event: snapshot` (the recent payload).
@@ -129,7 +130,6 @@ Same origin as the site, so no CORS.
   - Cap at 32 graphemes.
   - Words from `BLOCKED_WORDS_FILE` are matched case-insensitively after NFKC and masked with `•`, one bullet per character.
 - **Avatars:** only the hash is stored. The client builds `https://avatars.steamstatic.com/{hash}_medium.jpg`.
-- **Opt-out:** `HIDDEN_IDS_FILE` holds SteamID64s, one per line, re-read on `SIGHUP`. Listed players never appear. Requests come through the contact or issue link in the README.
 - **Retention:** `checks` older than 24 h, `players` unseen for 7 days and expired `kv` rows are purged hourly. IPs are never stored.
 
 ## Component 3 — Home page feed UI (client-side, inline in the home page)
@@ -140,7 +140,7 @@ Validated with the interactive mockup (split-flap option B plus catch/release).
 - Section "Recently checked" with a LIVE dot and an "N checked this hour" counter.
 - A search input.
 - A scrollable list about 7 rows tall. Rows are grouped under sticky headers: **Just now** (< 1 min), **Last 5 min**, **Last hour**.
-- Row: 36 px avatar, nickname (with an `×N` badge when count ≥ 2), relative time, and a "Dotabuff →" link.
+- Row: 36 px avatar (with a small lock badge for private Steam profiles, titled "Private Steam profile"), nickname (with an `×N` badge when count ≥ 2), relative time, and a "Dotabuff →" link.
 
 **Links** go straight to `https://www.dotabuff.com/players/{dotaId}`, not through `/profiles/…`, so clicks from the feed never create hits.
 
@@ -151,7 +151,7 @@ Validated with the interactive mockup (split-flap option B plus catch/release).
 
 **Drip and upsert:**
 - New entries are queued and revealed one at a time, spaced across the expected batch gap (min 400 ms, max 3 s); only a live queue longer than 60 is partly inserted without animation. When the feed is released after a pause, the held backlog except the newest 3 is inserted without animation and those 3 flap in.
-- The client keeps one newest copy per player across shown and queued rows, so a stale queued copy never overwrites newer data. Snapshots are authoritative: rows missing from one (opted out, turned private) are removed. The server re-sends a snapshot when that happens, never a list of removed ids.
+- The client keeps one newest copy per player across shown and queued rows, so a stale queued copy never overwrites newer data. Snapshots are authoritative: rows missing from one (e.g. an account Steam stopped returning) are removed. The server re-sends a snapshot when that happens, never a list of removed ids.
 - A player already in the list moves to the top, re-flaps, and updates `×N`.
 
 **Split-flap animation:**
@@ -227,10 +227,10 @@ Validated with the interactive mockup (split-flap option B plus catch/release).
 - **Feed (`test/feed.test.js`):**
   - Sanitiser (bidi, zalgo, blocked words).
   - Rate limits.
-  - Tick with mocked Steam: chunking > 100, private profiles dropped, backoff, atomic pending removal.
+  - Tick with mocked Steam: chunking > 100, private profiles kept and flagged, missing accounts dropped, backoff, atomic pending removal.
   - `/api/recent.json` shape and counts.
   - SSE snapshot and broadcast.
-  - Hidden-ids reload.
+  - Blocked-words reload.
 - **Adapters (`test/server.test.js`):**
   - Boots `server.js` on an ephemeral port with a temp DB.
   - Hits `/`, `/profiles/{id}` and `/api/recent.json`.
@@ -246,7 +246,7 @@ Validated with the interactive mockup (split-flap option B plus catch/release).
 - `README.md`:
   - Update the overview: two runtimes (Cloudflare Worker, or self-hosted Node server with the feed).
   - New "Self-hosting" section: Docker, reverse proxy, Cloudflare settings, switching and rollback.
-  - New "Recent checks feed" section: what it shows, privacy and retention, opt-out.
+  - New "Recent checks feed" section: what it shows (including private profiles), privacy and retention.
 - `.env.example` for the server and an updated `.dev.vars.example` for the Worker.
 - New `CHANGELOG.md` (Keep a Changelog) with an *Unreleased → Added / Changed* entry.
 
@@ -255,4 +255,4 @@ Validated with the interactive mockup (split-flap option B plus catch/release).
 - The feed on the Worker runtime (Durable Object, or hybrid ingest to a remote feed).
 - "Opened together" grouping: ≥ 4 distinct profiles within ~10 s collapse into one block.
 - A Battle Cup header mode when checks/min spike.
-- Owner-verified opt-out via Steam OpenID.
+- Owner-verified opt-out via Steam OpenID, if anyone ever asks.
