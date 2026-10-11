@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   avatarUrl, pickLang, t, ago, splitTerms, matchesTerms, highlightRanges,
-  timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, isStale, insertIndex
+  timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, isStale, insertIndex,
+  tempoPerMin, nextColumns, maxColumnsFor, pickColumn
 } from '../src/client/feed-shared.js';
 
 const HASH = 'fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb';
@@ -106,4 +107,38 @@ test('insertIndex: newest first, a late older entry lands below newer rows', () 
   assert.equal(insertIndex([500, 400, 100], 50), 3);
   assert.equal(insertIndex([500, 400], 400), 1); // ties go above: newest arrival on top
   assert.equal(insertIndex([], 1), 0);
+});
+
+test('tempoPerMin: arrivals in the last 2 minutes, per minute', () => {
+  const now = 1_000_000;
+  const times = [now - 130_000, now - 100_000, now - 50_000, now - 10_000, now - 1000];
+  assert.equal(tempoPerMin(times, now), 2); // 4 in 2 min
+  assert.equal(tempoPerMin([], now), 0);
+});
+
+test('nextColumns: up at 20 / 45 per min, down below 12 / 30 (hysteresis), capped', () => {
+  assert.equal(nextColumns(1, 19, 3), 1);
+  assert.equal(nextColumns(1, 20, 3), 2);
+  assert.equal(nextColumns(1, 50, 3), 3);
+  assert.equal(nextColumns(2, 44, 3), 2);
+  assert.equal(nextColumns(2, 45, 3), 3);
+  assert.equal(nextColumns(3, 31, 3), 3);
+  assert.equal(nextColumns(3, 29, 3), 2);
+  assert.equal(nextColumns(3, 5, 3), 1);
+  assert.equal(nextColumns(2, 13, 3), 2);
+  assert.equal(nextColumns(2, 11, 3), 1);
+  assert.equal(nextColumns(1, 80, 2), 2);
+  assert.equal(nextColumns(3, 80, 1), 1);
+});
+
+test('maxColumnsFor: by list width', () => {
+  assert.equal(maxColumnsFor(380), 1);
+  assert.equal(maxColumnsFor(600), 2);
+  assert.equal(maxColumnsFor(720), 3);
+});
+
+test('pickColumn: the column that changed longest ago, lowest index on ties', () => {
+  assert.equal(pickColumn([300, 100, 200]), 1);
+  assert.equal(pickColumn([0, 0, 0]), 0);
+  assert.equal(pickColumn([5]), 0);
 });

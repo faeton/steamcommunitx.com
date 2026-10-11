@@ -30,7 +30,7 @@ const DICT = {
     pillHover: '⏸ Paused while hovering',
     pill: '⏸ Paused · back to live ↑',
     empty: 'Nobody checked in the last hour yet.',
-    dotabuff: 'Dotabuff →',
+    dotabuff: 'Open on Dotabuff',
     agoNow: 'just now',
     agoSec: '{n}s ago',
     agoMin: '{n} min ago',
@@ -53,7 +53,7 @@ const DICT = {
     pillHover: '⏸ Пауза, пока курсор на ленте',
     pill: '⏸ Пауза · к live ↑',
     empty: 'За последний час никого не проверяли.',
-    dotabuff: 'Dotabuff →',
+    dotabuff: 'Открыть на Dotabuff',
     agoNow: 'только что',
     agoSec: '{n} сек назад',
     agoMin: '{n} мин назад',
@@ -76,7 +76,7 @@ const DICT = {
     pillHover: '⏸ Пауза, поки курсор на стрічці',
     pill: '⏸ Пауза · до live ↑',
     empty: 'За останню годину нікого не перевіряли.',
-    dotabuff: 'Dotabuff →',
+    dotabuff: 'Відкрити на Dotabuff',
     agoNow: 'щойно',
     agoSec: '{n} с тому',
     agoMin: '{n} хв тому',
@@ -178,4 +178,36 @@ export function isStale(data, lastGeneratedAt) {
 export function insertIndex(timestamps, ts) {
   const i = timestamps.findIndex(other => other <= ts);
   return i === -1 ? timestamps.length : i;
+}
+
+// ---- columns by tempo ----
+// When checks arrive fast (Battle Cup Saturdays) one reel moves too quickly
+// to read, so the feed splits into 2-3 independent reels. Thresholds are in
+// rows per minute; going down needs a clearly lower rate (hysteresis).
+export const TEMPO_WINDOW_MS = 120_000;
+const UP = [Infinity, 20, 45];   // from n columns to n + 1 at >= UP[n]
+const DOWN = [0, 0, 12, 30];     // from n columns to n - 1 below DOWN[n]
+
+export function tempoPerMin(times, now, windowMs = TEMPO_WINDOW_MS) {
+  const n = times.filter(ts => now - ts <= windowMs).length;
+  return n * 60_000 / windowMs;
+}
+
+export function nextColumns(current, perMin, maxCols) {
+  let n = current;
+  while (n < 3 && perMin >= UP[n]) n++;
+  while (n > 1 && perMin < DOWN[n]) n--;
+  return Math.max(1, Math.min(n, maxCols));
+}
+
+export function maxColumnsFor(width) {
+  if (width >= 680) return 3;
+  if (width >= 520) return 2;
+  return 1;
+}
+
+export function pickColumn(lastChanged) {
+  let best = 0;
+  for (let i = 1; i < lastChanged.length; i++) if (lastChanged[i] < lastChanged[best]) best = i;
+  return best;
 }

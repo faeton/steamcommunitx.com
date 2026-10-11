@@ -140,7 +140,9 @@ Validated with the interactive mockup (split-flap option B plus catch/release).
 - Section "Recently checked" with a LIVE dot and an "N checked this hour" counter.
 - A search input.
 - A scrollable list about 7 rows tall. Rows are grouped under sticky headers: **Just now** (< 1 min), **Last 5 min**, **Last hour**.
-- Row: 36 px avatar (with a small lock badge for private Steam profiles, titled "Private Steam profile"), nickname (with an `×N` badge when count ≥ 2), relative time, and a "Dotabuff →" link.
+- Row: 36 px avatar (with a small lock badge for private Steam profiles, titled "Private Steam profile"), nickname (with an `×N` badge when count ≥ 2), relative time, and a small "D" tile linking to Dotabuff. Only the tile is a link, so tapping a row just catches the feed.
+- Long nicknames fade out at the right edge (CSS mask) instead of widening the column or ending in "…"; the full name is in the tooltip.
+- **Reels by tempo:** the client measures live arrivals over the last 2 minutes and splits the list into independent reels: 2 columns from 20/min (back below 12), 3 from 45/min (back below 30), capped by width (1 below 520 px, 2 below 680 px). Each new row goes to the reel that has been still longest. The count changes at most once a minute, never while paused, and a filter always means one reel. Time headers are only shown with one reel.
 
 **Links** go straight to `https://www.dotabuff.com/players/{dotaId}`, not through `/profiles/…`, so clicks from the feed never create hits.
 

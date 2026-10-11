@@ -1,11 +1,13 @@
 // Home page "Recently checked" feed: SSE (polling fallback), drip-in with a
-// split-flap animation, catch/release scrolling, and a nickname filter.
+// split-flap animation, catch/release scrolling, a nickname filter, and 1-3
+// independent reels (columns) depending on how fast checks arrive.
 // All nickname text goes through DOM text nodes, never innerHTML. Optional
 // browser APIs (Element.animate, getAnimations) are feature-checked because
 // the Dota in-game browser runs an older Chromium.
 import {
   t, ago, pickLang, avatarUrl, splitTerms, matchesTerms, highlightRanges,
-  timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, isStale, insertIndex, HOUR_MS
+  timeBlock, dripDelay, isNewer, diffEntries, idsToRemove, isStale, insertIndex, HOUR_MS,
+  tempoPerMin, nextColumns, maxColumnsFor, pickColumn, TEMPO_WINDOW_MS
 } from './feed-shared.js';
 
 const ROW = 56;
@@ -18,6 +20,7 @@ const MAX_DRIP = 60;
 const MAX_ROWS = 200;
 const POLL_MS = 30000;
 const FLAP_TICK_MS = 45;
+const RETUNE_MIN_MS = 60000; // column count changes at most once a minute
 const GLYPHS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZАБВГДЕЖЗИКЛМНОПРСТУ0123456789#@*';
 
 const lang = pickLang(navigator.language);
@@ -55,6 +58,11 @@ let layoutKey = '';
 let es = null;
 let streamUp = false;
 let pollTimer = null;
+let cols = [];            // column elements inside the list; one in calm times
+let colSeq = [];          // per column: sequence number of its last arrival
+let seq = 0;
+let lastRetune = 0;
+const arrivals = [];      // arrival times of live rows, for the tempo
 
 section.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(lang, el.dataset.i18n); });
 qInput.placeholder = t(lang, 'searchPlaceholder');
@@ -77,23 +85,39 @@ function graphemes(s) {
   return segmenter ? Array.from(segmenter.segment(s), g => g.segment) : Array.from(s);
 }
 
+// The name sits in its own span so a long one can fade out while the ×N
+// badge stays visible; the fade only applies when the name really overflows.
+function fitName(r) {
+  const name = r._name;
+  name.classList.toggle('fd-fade', name.scrollWidth > name.clientWidth + 1);
+}
+
+function setNick(r, nodes) {
+  const e = r._e;
+  r._name.textContent = '';
+  r._name.append(...nodes);
+  r._nick.textContent = '';
+  r._nick.append(r._name);
+  if (e.count > 1) r._nick.append(countBadge(e.count));
+}
+
 function paint(r) {
   const e = r._e;
-  const nick = r._nick;
-  nick.removeAttribute('aria-label');
-  nick.textContent = '';
+  r._name.removeAttribute('aria-label');
+  const nodes = [];
   let pos = 0;
   for (const [a, b] of highlightRanges(e.name, terms)) {
-    nick.append(e.name.slice(pos, a));
+    nodes.push(e.name.slice(pos, a));
     const mark = document.createElement('mark');
     mark.textContent = e.name.slice(a, b);
-    nick.append(mark);
+    nodes.push(mark);
     pos = b;
   }
-  nick.append(e.name.slice(pos));
-  if (e.count > 1) nick.append(countBadge(e.count));
+  nodes.push(e.name.slice(pos));
+  setNick(r, nodes);
   r._meta.textContent = ago(lang, e.lastTs, Date.now());
   r.hidden = !matchesTerms(e.name, terms);
+  if (r.isConnected && !r.hidden) fitName(r);
 }
 
 // Private Steam profiles still have a public name and avatar; a small lock
@@ -135,13 +159,20 @@ function makeRow(e) {
   who.className = 'fd-who';
   r._nick = document.createElement('div');
   r._nick.className = 'fd-nick';
+  r._name = document.createElement('span');
+  r._name.className = 'fd-name';
+  r._name.title = e.name;
   r._meta = document.createElement('div');
   r._meta.className = 'fd-meta';
   who.append(r._nick, r._meta);
+  // Only the small "D" tile is a link: a tap elsewhere on the row just
+  // catches the feed (important on phones).
   const go = document.createElement('a');
   go.className = 'fd-go';
   go.href = 'https://www.dotabuff.com/players/' + encodeURIComponent(e.dotaId);
-  go.textContent = t(lang, 'dotabuff');
+  go.title = t(lang, 'dotabuff');
+  go.setAttribute('aria-label', t(lang, 'dotabuff') + ': ' + e.name);
+  go.textContent = 'D';
   r.append(av, who, go);
   paint(r);
   return r;
@@ -162,10 +193,7 @@ function dropRow(r) {
 // name via aria-label.
 function flap(r) {
   const e = r._e;
-  const nick = r._nick;
   const ranges = highlightRanges(e.name, terms);
-  nick.setAttribute('aria-label', e.name);
-  nick.textContent = '';
   let offset = 0;
   const cells = graphemes(e.name).map(g => {
     const start = offset;
@@ -185,10 +213,11 @@ function flap(r) {
       cell._spin.textContent = GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
       cell.append(cell._spin);
     }
-    nick.append(cell);
     return cell;
   });
-  if (e.count > 1) nick.append(countBadge(e.count));
+  setNick(r, cells);
+  r._name.setAttribute('aria-label', e.name);
+  fitName(r); // cells already have their final widths
   const lastTick = 4 + (cells.length - 1) * 2;
   let tick = 0;
   r._flap = setInterval(() => {
@@ -225,17 +254,25 @@ function insert(e, animated) {
   if (old) dropRow(old);
   const r = makeRow(e);
   rows.set(e.steamId64, r);
-  const shown = [...list.querySelectorAll('.fd-row')];
-  list.insertBefore(r, shown[insertIndex(shown.map(x => x._e.lastTs), e.lastTs)] || null);
+  // A new arrival goes to the reel that has been still the longest.
+  const c = pickColumn(colSeq);
+  colSeq[c] = ++seq;
+  const shown = [...cols[c].querySelectorAll('.fd-row')];
+  cols[c].insertBefore(r, shown[insertIndex(shown.map(x => x._e.lastTs), e.lastTs)] || null);
+  if (!r.hidden) fitName(r);
   if (animated && !r.hidden && !reduce) flap(r);
   if (loaded && terms.length && !r.hidden) notifyPinned(r);
 }
 
 // Rows past the hour are forgotten entirely; rows past the display cap only
 // lose their DOM node, so the next snapshot does not resurrect them as new.
+function sortedRows() {
+  return [...rows.values()].sort((a, b) => b._e.lastTs - a._e.lastTs);
+}
+
 function trim() {
   const cutoff = Date.now() - HOUR_MS;
-  [...list.querySelectorAll('.fd-row')].forEach((r, i) => {
+  sortedRows().forEach((r, i) => {
     if (r._e.lastTs < cutoff || i >= MAX_ROWS) dropRow(r);
   });
   for (const [id, e] of latest) if (e.lastTs < cutoff) latest.delete(id);
@@ -243,24 +280,27 @@ function trim() {
 
 // Rebuild time-block headers only when the grouping changed, and keep the
 // scroll position so a paused reader is not moved.
+// With several reels the time headers are dropped: at that tempo nearly
+// everything is "just now", and every row still shows its own age.
 function layout() {
   const now = Date.now();
-  const visible = [...list.querySelectorAll('.fd-row')].filter(r => !r.hidden);
-  const blocks = visible.map(r => timeBlock(r._e.lastTs, now));
-  const key = visible.map((r, i) => r._e.steamId64 + ':' + blocks[i]).join('|');
+  const single = cols.length === 1;
+  const visible = (single ? [...cols[0].querySelectorAll('.fd-row')] : sortedRows()).filter(r => !r.hidden);
+  const blocks = visible.map(r => (single ? timeBlock(r._e.lastTs, now) : ''));
+  const key = cols.length + '#' + visible.map((r, i) => r._e.steamId64 + ':' + blocks[i]).join('|');
   hitsEl.textContent = terms.length ? t(lang, 'hits', { n: visible.length }) : '';
   if (key === layoutKey) return;
   layoutKey = key;
   const top = list.scrollTop;
   list.querySelectorAll('.fd-blk, .fd-empty').forEach(el => el.remove());
   let current = null;
-  visible.forEach((r, i) => {
+  if (single) visible.forEach((r, i) => {
     if (blocks[i] === current) return;
     current = blocks[i];
     const h = document.createElement('div');
     h.className = 'fd-blk';
     h.textContent = t(lang, current);
-    list.insertBefore(h, r);
+    cols[0].insertBefore(h, r);
   });
   if (!visible.length) {
     const empty = document.createElement('div');
@@ -290,10 +330,59 @@ function removeIds(ids) {
   if (paused) renderPill();
 }
 
+// ---- columns ----
+
+// Rebuild the reels and deal the rows out newest-first, round robin, so each
+// reel stays sorted by time. Rows keep running animations when moved.
+function setColumns(n) {
+  const sorted = sortedRows();
+  const top = list.scrollTop;
+  list.textContent = '';
+  cols = [];
+  for (let i = 0; i < n; i++) {
+    const col = document.createElement('div');
+    col.className = 'fd-col';
+    list.append(col);
+    cols.push(col);
+  }
+  colSeq = cols.map(() => 0);
+  sorted.forEach((r, i) => cols[i % n].append(r));
+  list.classList.toggle('fd-multi', n > 1);
+  list.style.setProperty('--cols', String(n));
+  list.dataset.cols = String(n);
+  layoutKey = '';
+  layout();
+  if (paused) list.scrollTop = top;
+  rows.forEach(r => { if (!r.hidden && !r._flap) fitName(r); });
+  if (loaded && !reduce) animate(list, [{ opacity: 0.35 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' });
+}
+
+// Pick the reel count from the recent arrival rate. Never while the reader
+// holds the list; a filter always means one reel (few rows, easy to scan).
+function retune(force) {
+  if (!loaded || paused) return;
+  const now = Date.now();
+  while (arrivals.length && now - arrivals[0] > TEMPO_WINDOW_MS) arrivals.shift();
+  const want = terms.length ? 1 : nextColumns(cols.length, tempoPerMin(arrivals, now), maxColumnsFor(list.clientWidth));
+  if (want === cols.length) return;
+  if (!force && now - lastRetune < RETUNE_MIN_MS) return;
+  lastRetune = now;
+  setColumns(want);
+}
+
+window.addEventListener('resize', () => {
+  if (cols.length > maxColumnsFor(list.clientWidth)) retune(true);
+});
+
 // ---- drip ----
 
 function enqueue(entries) {
-  for (const e of entries) (paused ? held : incoming).push(e);
+  const now = Date.now();
+  for (const e of entries) {
+    arrivals.push(now);
+    (paused ? held : incoming).push(e);
+  }
+  retune(false);
   if (paused) renderPill();
   else pump();
 }
@@ -418,10 +507,13 @@ pill.addEventListener('click', () => { hover = false; release(); });
 // ---- search ----
 
 function setQuery(q) {
+  const had = terms.length > 0;
   terms = splitTerms(q);
   rows.forEach(r => { if (!r._flap) paint(r); });
   layoutKey = '';
   layout();
+  if (terms.length && cols.length > 1) retune(true);
+  else if (had && !terms.length) { lastRetune = 0; retune(false); }
 }
 
 let saved = new URLSearchParams(location.search).get('q');
@@ -452,6 +544,7 @@ function onData(data, isSnapshot) {
   const fresh = diffEntries(entries, latest);
   fresh.forEach(e => latest.set(e.steamId64, e));
   if (!loaded && isSnapshot) {
+    setColumns(1);
     fresh.forEach(e => insert(e, false));
     loaded = true;
     section.hidden = false;
@@ -523,6 +616,6 @@ setInterval(() => {
     if (r._meta.textContent !== text) r._meta.textContent = text;
   });
 }, 1000);
-setInterval(() => { if (loaded && !paused && !document.hidden) { trim(); layout(); } }, 15000);
+setInterval(() => { if (loaded && !paused && !document.hidden) { trim(); layout(); retune(false); } }, 15000);
 
 connect();

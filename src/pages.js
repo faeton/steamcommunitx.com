@@ -127,7 +127,11 @@ const FEED_CSS = `
     .fd-count { font-variant-numeric: tabular-nums; }
     .fd-list { height: 392px; overflow-y: auto; overscroll-behavior: contain; background: var(--bg); scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
     .fd-blk { position: sticky; top: 0; z-index: 1; padding: 6px 16px; font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); background: var(--bg-2); }
+    .fd-list.fd-multi { display: grid; grid-template-columns: repeat(var(--cols, 1), minmax(0, 1fr)); align-items: start; }
+    .fd-col { min-width: 0; }
+    .fd-multi .fd-col + .fd-col { border-left: 1px solid var(--border); }
     .fd-row { height: 56px; display: flex; align-items: center; gap: 12px; padding: 0 16px; overflow: hidden; }
+    .fd-multi .fd-row { gap: 10px; padding: 0 12px; }
     .fd-row + .fd-row { border-top: 1px solid rgba(42,56,72,0.55); }
     .fd-row:hover { background: rgba(102,192,244,0.05); }
     .fd-row[hidden] { display: none; }
@@ -140,13 +144,26 @@ const FEED_CSS = `
     }
     .fd-lock svg { width: 8px; height: 8px; display: block; }
     .fd-who { flex: 1; min-width: 0; }
-    .fd-nick { font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; unicode-bidi: isolate; }
+    .fd-nick { display: flex; align-items: center; min-width: 0; font-weight: 600; font-size: 15px; }
+    .fd-name { min-width: 0; max-width: 18em; overflow: hidden; white-space: nowrap; unicode-bidi: isolate; }
+    /* Long nicknames fade out instead of stretching the column or ending in "…". */
+    .fd-name.fd-fade {
+      -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+      mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+    }
     .fd-nick mark, .fd-flap.fd-hl { background: rgba(102,192,244,0.25); color: var(--text); border-radius: 3px; }
     .fd-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-    .fd-x { font-size: 11px; font-weight: 700; color: var(--gold); background: rgba(245,196,81,0.12); border-radius: 6px; padding: 1px 6px; margin-left: 6px; }
-    .fd-go { color: var(--accent); font-size: 13px; font-weight: 600; white-space: nowrap; }
+    .fd-x { font-size: 11px; font-weight: 700; color: var(--gold); background: rgba(245,196,81,0.12); border-radius: 6px; padding: 1px 6px; margin-left: 6px; flex: none; }
+    /* Small "D" tile linking to Dotabuff: fits even three columns. */
+    .fd-go {
+      flex: none; width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center;
+      background: rgba(102,192,244,0.1); border: 1px solid rgba(102,192,244,0.3); color: var(--accent);
+      font-size: 13px; font-weight: 800; line-height: 1; text-decoration: none;
+    }
+    .fd-go:hover, .fd-go:focus-visible { background: var(--accent); border-color: var(--accent); color: var(--bg); text-decoration: none; }
     .fd-empty { padding: 24px 16px; color: var(--muted); text-align: center; font-size: 14px; }
     .fd-flap { display: inline-block; position: relative; white-space: pre; }
+    .fd-flap.spin { clip-path: inset(0); } /* random glyphs stay inside their cell; unlike overflow, keeps the baseline */
     .fd-flap.spin .fd-g { visibility: hidden; }
     .fd-spin { position: absolute; left: 50%; top: 0; transform: translateX(-50%); color: var(--accent); }
     .fd-flip { animation: fd-flip .45s cubic-bezier(.3,1.4,.5,1); transform-origin: top; }
@@ -161,7 +178,7 @@ const FEED_CSS = `
     .fd-box.paused .fd-pill { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
     .fd-bar { position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--accent); transform-origin: left; }
     @media (prefers-reduced-motion: reduce) { .fd-flip, .fd-row.fd-pinned { animation: none; } .fd-pill { transition: none; } }
-    @media (max-width: 480px) { .fd-list { height: 336px; } .fd-go { font-size: 12px; } }`;
+    @media (max-width: 480px) { .fd-list { height: 336px; } }`;
 
 export function indexPage(hostname, analytics = '', opts = {}) {
   const feed = Boolean(opts.feed);
