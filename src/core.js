@@ -268,7 +268,9 @@ export async function handleRequest(request, env, ctx) {
   if (route.kind === 'home') {
     return new Response(indexPage(hostname, analytics, { feed: Boolean(env.FEED), lang }), {
       status: 200,
-      headers: { 'Content-Type': 'text/html', 'Cache-Control': 'max-age=3600' }
+      // With the feed the page loads /assets modules that change on deploy, so
+      // browsers revalidate instead of pairing an old page with new scripts.
+      headers: { 'Content-Type': 'text/html', 'Cache-Control': env.FEED ? 'no-cache' : 'max-age=3600' }
     });
   }
   if (route.kind === 'redirect-base') {

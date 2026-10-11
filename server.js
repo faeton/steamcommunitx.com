@@ -4,6 +4,7 @@
 // .env.example and the "Self-hosting" section of the README.
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -75,10 +76,18 @@ export async function writeWebResponse(response, req, res, { drainTimeoutMs = DR
   if (!res.destroyed && !res.writableEnded) res.end();
 }
 
-async function serveAsset(path, res) {
+// Feed modules are small; revalidating them on every page load (ETag + 304)
+// keeps the page and its scripts from different deploys apart.
+async function serveAsset(path, req, res) {
   try {
     const body = await readFile(ASSETS[path]);
-    res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=300' });
+    const etag = `"${createHash('sha256').update(body).digest('hex').slice(0, 16)}"`;
+    const headers = { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', ETag: etag };
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, headers).end();
+      return;
+    }
+    res.writeHead(200, headers);
     res.end(body);
   } catch {
     res.writeHead(404).end();
@@ -119,7 +128,7 @@ export function createServer({ env = process.env, dbPath = env.DB_PATH || './dat
         return sendJson(res, 200, { ok: true, feed: feed ? feed.health() : null });
       }
       if (url.pathname.startsWith('/assets/')) {
-        if (feed && Object.hasOwn(ASSETS, url.pathname)) return await serveAsset(url.pathname, res);
+        if (feed && Object.hasOwn(ASSETS, url.pathname)) return await serveAsset(url.pathname, req, res);
         res.writeHead(404).end();
         return;
       }

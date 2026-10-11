@@ -316,3 +316,10 @@ test('markRateLimitedKey: a non-numeric Retry-After falls back to 300 s instead 
   await markRateLimitedKey({ API_KEY_STATUS: kv }, 'k', 60);
   assert.deepEqual(puts, [['key:k:ratelimited', 330], ['key:k:ratelimited', 90]]);
 });
+
+test('home cache: revalidated with a feed (HTML and /assets must match), long-lived without', async () => {
+  const withFeed = await handleRequest(new Request('https://example.com/'), { FEED: fakeFeed() }, ctx);
+  assert.equal(withFeed.headers.get('cache-control'), 'no-cache');
+  const without = await handleRequest(new Request('https://example.com/'), {}, ctx);
+  assert.equal(without.headers.get('cache-control'), 'max-age=3600');
+});

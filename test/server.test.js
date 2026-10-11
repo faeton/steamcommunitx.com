@@ -157,3 +157,18 @@ test('server: close() is idempotent (a second signal does not close SQLite twice
   await Promise.all([app.close(), app.close()]);
   await app.close();
 });
+
+test('server: feed assets carry an ETag, revalidate, and answer 304 when unchanged', async () => {
+  const app = await boot({ STEAM_API_KEY: 'k' });
+  try {
+    const first = await fetch(`${app.base}/assets/feed-shared.js`);
+    assert.equal(first.headers.get('cache-control'), 'no-cache');
+    const etag = first.headers.get('etag');
+    assert.match(etag, /^"[0-9a-f]{16}"$/);
+    await first.text();
+    const again = await fetch(`${app.base}/assets/feed-shared.js`, { headers: { 'if-none-match': etag } });
+    assert.equal(again.status, 304);
+  } finally {
+    await app.close();
+  }
+});
