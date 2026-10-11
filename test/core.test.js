@@ -198,3 +198,111 @@ test('worker adapter: serves the home page through handleRequest', async () => {
   assert.equal(res.status, 200);
   assert.match(await res.text(), /One-line redirect to/);
 });
+
+import { handleRequest, toSteamId64, accountIdToSteamId64, isRealBrowser, ipHash } from '../src/core.js';
+
+const BROWSER = {
+  'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
+  accept: 'text/html,application/xhtml+xml',
+  'cf-connecting-ip': '203.0.113.7'
+};
+const ctx = { waitUntil() {} };
+
+function fakeFeed(teaser = { hourCount: 5, seen: null, faces: [] }) {
+  const calls = [];
+  return {
+    calls,
+    recordHit(hit) { calls.push(['recordHit', hit]); return true; },
+    teaser(dotaId) { calls.push(['teaser', dotaId]); return teaser; },
+    async handle(request) { calls.push(['handle', new URL(request.url).pathname]); return new Response('api'); }
+  };
+}
+
+test('toSteamId64 / accountIdToSteamId64: all ID forms', () => {
+  assert.equal(toSteamId64('76561197960287930'), '76561197960287930');
+  assert.equal(toSteamId64('[U:1:22202]'), '76561197960287930');
+  assert.equal(toSteamId64('U:1:22202'), '76561197960287930');
+  assert.equal(toSteamId64('garbage'), null);
+  assert.equal(accountIdToSteamId64('22202'), '76561197960287930');
+  assert.equal(accountIdToSteamId64('12345678901'), null);
+});
+
+test('isRealBrowser: filters bots, previews and non-HTML requests', () => {
+  const mk = (h, method = 'GET') => new Request('https://example.com/profiles/1', { method, headers: h });
+  assert.equal(isRealBrowser(mk(BROWSER)), true);
+  assert.equal(isRealBrowser(mk({ ...BROWSER, 'user-agent': 'Mozilla/5.0 (compatible; Discordbot/2.0)' })), false);
+  assert.equal(isRealBrowser(mk({ ...BROWSER, 'user-agent': 'TelegramBot (like TwitterBot)' })), false);
+  assert.equal(isRealBrowser(mk({ ...BROWSER, accept: 'application/json' })), false);
+  assert.equal(isRealBrowser(mk({ ...BROWSER, 'user-agent': '' })), false);
+  assert.equal(isRealBrowser(mk(BROWSER, 'HEAD')), false);
+});
+
+test('ipHash: stable within a day, short hex', async () => {
+  const a = await ipHash('203.0.113.7', Date.UTC(2026, 9, 10, 12));
+  const b = await ipHash('203.0.113.7', Date.UTC(2026, 9, 10, 18));
+  const c = await ipHash('198.51.100.1', Date.UTC(2026, 9, 10, 18));
+  assert.match(a, /^[0-9a-f]{16}$/);
+  assert.equal(a, b);
+  assert.notEqual(a, c);
+});
+
+test('redirect with feed: teaser computed BEFORE the hit, hit recorded, no-store', async () => {
+  const feed = fakeFeed();
+  const res = await handleRequest(new Request('https://example.com/profiles/[U:1:22202]', { headers: BROWSER }), { FEED: feed }, ctx);
+  assert.deepEqual(feed.calls.map(c => c[0]), ['teaser', 'recordHit']);
+  assert.equal(feed.calls[0][1], '22202');
+  assert.equal(feed.calls[1][1].steamId64, '76561197960287930');
+  assert.match(feed.calls[1][1].ipHash, /^[0-9a-f]{16}$/);
+  assert.equal(res.headers.get('cache-control'), 'no-store');
+  const html = await res.text();
+  assert.match(html, /5 players checked this hour/);
+  assert.match(html, /<noscript><meta http-equiv="refresh"/);
+});
+
+test('redirect with feed: bots get the page but are not recorded', async () => {
+  const feed = fakeFeed();
+  const res = await handleRequest(new Request('https://example.com/profiles/76561197960287930', {
+    headers: { ...BROWSER, 'user-agent': 'facebookexternalhit/1.1' }
+  }), { FEED: feed }, ctx);
+  assert.equal(res.status, 200);
+  assert.deepEqual(feed.calls.map(c => c[0]), ['teaser']);
+});
+
+test('redirect with feed: a throwing feed never breaks the redirect', async () => {
+  const feed = { recordHit() { throw new Error('boom'); }, teaser() { throw new Error('boom'); }, handle() {} };
+  const res = await handleRequest(new Request('https://example.com/profiles/76561197960287930', { headers: BROWSER }), { FEED: feed }, ctx);
+  assert.equal(res.status, 200);
+  assert.match(await res.text(), /dotabuff\.com\/players\/22202/);
+});
+
+test('redirect without feed: unchanged caching, no teaser, meta refresh in noscript', async () => {
+  const res = await handleRequest(new Request('https://example.com/profiles/76561197960287930', { headers: BROWSER }), {}, ctx);
+  assert.equal(res.headers.get('cache-control'), 'max-age=300');
+  const html = await res.text();
+  assert.doesNotMatch(html, /id="teaser"/);
+  assert.match(html, /<noscript><meta http-equiv="refresh" content="1;url=https:\/\/www\.dotabuff\.com\/players\/22202"><\/noscript>/);
+});
+
+test('teaser language follows Accept-Language', async () => {
+  const res = await handleRequest(new Request('https://example.com/profiles/76561197960287930', {
+    headers: { ...BROWSER, 'accept-language': 'ru-RU,ru;q=0.9' }
+  }), { FEED: fakeFeed() }, ctx);
+  assert.match(await res.text(), /Проверок за час: 5/);
+});
+
+test('/api/* goes to the feed when present, 404 page otherwise', async () => {
+  const feed = fakeFeed();
+  const withFeed = await handleRequest(new Request('https://example.com/api/recent.json'), { FEED: feed }, ctx);
+  assert.equal(await withFeed.text(), 'api');
+  assert.deepEqual(feed.calls[0], ['handle', '/api/recent.json']);
+  const without = await handleRequest(new Request('https://example.com/api/recent.json'), {}, ctx);
+  assert.equal(without.status, 404);
+});
+
+test('home page renders the feed section only with a feed', async () => {
+  const withFeed = await (await handleRequest(new Request('https://example.com/'), { FEED: fakeFeed() }, ctx)).text();
+  assert.match(withFeed, /id="feed-section"/);
+  assert.match(withFeed, /<script type="module" src="\/assets\/feed\.js"><\/script>/);
+  const without = await (await handleRequest(new Request('https://example.com/'), {}, ctx)).text();
+  assert.doesNotMatch(without, /feed-section/);
+});

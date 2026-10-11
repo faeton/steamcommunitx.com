@@ -1,3 +1,28 @@
+import { t, ago, avatarUrl } from './client/feed-shared.js';
+
+export function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// One-line teaser on the redirect interstitial. Rendered server-side so it is
+// visible on the first frame of a 1-second page.
+export function renderTeaser(teaser, lang = 'en', now = Date.now()) {
+  if (!teaser) return '';
+  let text;
+  let faces = '';
+  if (teaser.seen) {
+    const key = teaser.seen.count > 1 ? 'teaserSeenMany' : 'teaserSeenOnce';
+    text = t(lang, key, { ago: ago(lang, teaser.seen.lastTs, now), count: teaser.seen.count });
+  } else if (teaser.hourCount > 0) {
+    text = t(lang, 'teaserHour', { n: teaser.hourCount });
+    faces = (teaser.faces || []).map(avatarUrl).filter(Boolean).slice(0, 3)
+      .map(src => `<img src="${src}" alt="" width="20" height="20">`).join('');
+  } else {
+    return '';
+  }
+  return `<a class="teaser" id="teaser" href="/">${faces ? `<span class="faces">${faces}</span>` : ''}<span>${escapeHtml(text)}</span></a>`;
+}
+
 function getCommonStyles() {
   return `
     body { 
@@ -64,7 +89,81 @@ export function analyticsSnippet(env) {
 
 const REPO_URL = "https://github.com/faeton/steamcommunitx.com";
 
-export function indexPage(hostname, analytics = '') {
+
+const FEED_SECTION = `
+    <section class="fd" id="feed-section" aria-label="Recently checked players" hidden>
+      <div class="fd-head">
+        <h2 data-i18n="feedTitle">Recently checked</h2>
+      </div>
+      <div class="fd-search">
+        <input id="feed-q" type="search" autocomplete="off" spellcheck="false" aria-label="Filter by nickname">
+        <span class="fd-hits" id="feed-hits" aria-live="polite"></span>
+      </div>
+      <div class="fd-box" id="feed">
+        <div class="fd-top">
+          <span class="fd-live"><i></i><span id="feed-live" data-i18n="live">Live</span></span>
+          <span class="fd-count" id="feed-count"></span>
+        </div>
+        <button class="fd-pill" id="feed-pill" type="button"><span id="feed-pill-text"></span><span class="fd-bar" id="feed-bar"></span></button>
+        <div class="fd-list" id="feed-list" tabindex="0" aria-label="Recently checked players"></div>
+      </div>
+    </section>`;
+
+const FEED_CSS = `
+    .fd { margin-bottom: 40px; }
+    .fd-head h2 { margin: 0 0 12px; font-size: 1rem; color: var(--accent); letter-spacing: 0.04em; text-transform: uppercase; }
+    .fd-search { display: flex; gap: 10px; margin-bottom: 12px; align-items: center; }
+    .fd-search input {
+      flex: 1; min-width: 0; font: inherit; font-size: 15px; color: var(--text); background: var(--surface);
+      border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; outline: none;
+    }
+    .fd-search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(102,192,244,0.18); }
+    .fd-hits { color: var(--muted); font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .fd-box { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    .fd-top { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--muted); }
+    .fd-live { display: inline-flex; align-items: center; gap: 7px; color: var(--text); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; font-size: 12px; }
+    .fd-live i { width: 8px; height: 8px; border-radius: 50%; background: #e5484d; }
+    .fd-box.paused .fd-live i { background: var(--gold); }
+    .fd-count { font-variant-numeric: tabular-nums; }
+    .fd-list { height: 392px; overflow-y: auto; overscroll-behavior: contain; background: var(--bg); scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+    .fd-blk { position: sticky; top: 0; z-index: 1; padding: 6px 16px; font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); background: var(--bg-2); }
+    .fd-row { height: 56px; display: flex; align-items: center; gap: 12px; padding: 0 16px; overflow: hidden; }
+    .fd-row + .fd-row { border-top: 1px solid rgba(42,56,72,0.55); }
+    .fd-row:hover { background: rgba(102,192,244,0.05); }
+    .fd-row[hidden] { display: none; }
+    .fd-row.fd-pinned { animation: fd-flash 1.6s ease-out; }
+    .fd-avw { position: relative; width: 36px; height: 36px; flex: none; }
+    .fd-av { width: 36px; height: 36px; border-radius: 8px; display: block; background: var(--surface-2); object-fit: cover; }
+    .fd-lock {
+      position: absolute; right: -4px; bottom: -4px; width: 16px; height: 16px; border-radius: 50%;
+      display: grid; place-items: center; background: var(--surface-2); border: 2px solid var(--bg); color: var(--muted);
+    }
+    .fd-lock svg { width: 8px; height: 8px; display: block; }
+    .fd-who { flex: 1; min-width: 0; }
+    .fd-nick { font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; unicode-bidi: isolate; }
+    .fd-nick mark { background: rgba(102,192,244,0.25); color: var(--text); border-radius: 3px; padding: 0 1px; }
+    .fd-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .fd-x { font-size: 11px; font-weight: 700; color: var(--gold); background: rgba(245,196,81,0.12); border-radius: 6px; padding: 1px 6px; margin-left: 6px; }
+    .fd-go { color: var(--accent); font-size: 13px; font-weight: 600; white-space: nowrap; }
+    .fd-empty { padding: 24px 16px; color: var(--muted); text-align: center; font-size: 14px; }
+    .fd-flap { display: inline-block; min-width: 0.55em; text-align: center; }
+    .fd-flap.spin { color: var(--accent); }
+    .fd-flip { animation: fd-flip .45s cubic-bezier(.3,1.4,.5,1); transform-origin: top; }
+    @keyframes fd-flip { from { transform: rotateX(-90deg); } to { transform: rotateX(0); } }
+    @keyframes fd-flash { from { background: rgba(245,196,81,0.2); } to { background: transparent; } }
+    .fd-pill {
+      position: absolute; left: 50%; top: 48px; transform: translate(-50%, -8px); opacity: 0; pointer-events: none; z-index: 3;
+      background: var(--surface-2); border: 1px solid #3b5068; color: var(--text); border-radius: 999px;
+      padding: 7px 14px 9px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.4); transition: opacity .18s, transform .18s; overflow: hidden;
+    }
+    .fd-box.paused .fd-pill { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+    .fd-bar { position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--accent); transform-origin: left; }
+    @media (prefers-reduced-motion: reduce) { .fd-flip, .fd-row.fd-pinned { animation: none; } .fd-pill { transition: none; } }
+    @media (max-width: 480px) { .fd-list { height: 336px; } .fd-go { font-size: 12px; } }`;
+
+export function indexPage(hostname, analytics = '', opts = {}) {
+  const feed = Boolean(opts.feed);
   const host = hostname.split('/')[0];
   const examples = [
     { from: 'steamcommunity.com/id/username',                  to: `${host}/id/username`,                  label: 'Vanity URL' },
@@ -99,6 +198,7 @@ export function indexPage(hostname, analytics = '') {
       --muted: #8b9bac;
       --accent: #66c0f4;
       --accent-2: #4aa3d9;
+      --gold: #f5c451;
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; }
@@ -225,7 +325,7 @@ export function indexPage(hostname, analytics = '') {
       .ex-row { gap: 8px; }
       .ex-arrow { transform: rotate(90deg); margin: 4px auto; }
       footer { justify-content: center; text-align: center; }
-    }
+    }${feed ? FEED_CSS : ''}
   </style>
 </head>
 <body>
@@ -235,6 +335,7 @@ export function indexPage(hostname, analytics = '') {
       <h1>One-line redirect to <span class="accent">Dotabuff</span></h1>
       <p class="tagline">Swap <code style="color:var(--accent)">steamcommunity.com</code> for <code style="color:var(--accent)">${host}</code> in any Steam profile URL — get sent straight to the matching Dotabuff page.</p>
     </header>
+${feed ? FEED_SECTION : ''}
 
     <section class="examples" aria-label="URL conversion examples">${exampleCards}
     </section>
@@ -252,7 +353,7 @@ export function indexPage(hostname, analytics = '') {
       </a>
     </footer>
   </div>
-</body>
+${feed ? '  <script type="module" src="/assets/feed.js"></script>\n' : ''}</body>
 </html>`;
 }
 
@@ -376,7 +477,8 @@ export function resolveBanners(env) {
   }, []);
 }
 
-export function redirectPage(destinationURL, hostname, analytics = '', banners = []) {
+export function redirectPage(destinationURL, hostname, analytics = '', banners = [], opts = {}) {
+  const teaserHtml = renderTeaser(opts.teaser, opts.lang || 'en');
   const banner = banners.length ? banners[Math.floor(Math.random() * banners.length)] : null;
   const delaySeconds = banner ? BANNER_DELAY_SECONDS : QUICK_REDIRECT_SECONDS;
   const caption = banner && banner.label
@@ -389,7 +491,7 @@ export function redirectPage(destinationURL, hostname, analytics = '', banners =
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Redirecting to Dotabuff</title>
   ${analytics}
-  <meta http-equiv="refresh" content="${delaySeconds};url=${destinationURL}">
+  <noscript><meta http-equiv="refresh" content="${delaySeconds};url=${destinationURL}"></noscript>
   <style>
     :root {
       --bg: #0f1620;
@@ -430,7 +532,21 @@ export function redirectPage(destinationURL, hostname, analytics = '', banners =
     .sub strong { color: var(--accent); font-weight: 600; }
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
-    .manual-link { margin-top: 20px; font-size: 0.9rem; color: var(--muted); }${banner ? `
+    .manual-link { margin-top: 20px; font-size: 0.9rem; color: var(--muted); }
+    .teaser {
+      display: inline-flex; align-items: center; gap: 10px;
+      margin: 4px auto 18px; padding: 8px 16px; border-radius: 999px;
+      background: rgba(102,192,244,0.1); border: 1px solid rgba(102,192,244,0.3);
+      color: var(--text); font-size: 0.92rem; font-weight: 500;
+      animation: teaser-in .35s ease-out both;
+    }
+    .teaser:hover { border-color: var(--accent); text-decoration: none; }
+    .teaser .faces { display: inline-flex; }
+    .teaser .faces img { width: 20px; height: 20px; border-radius: 6px; border: 2px solid var(--bg); margin-left: -6px; }
+    .teaser .faces img:first-child { margin-left: 0; }
+    html.show-banner .teaser { animation: none; }
+    @keyframes teaser-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) { .teaser { animation: none; } }${banner ? `
     /* Banner is hidden until JS decides this visitor is due for it (once/hour). */
     .banner-wrap { display: none; }
     html.show-banner .banner-wrap { display: block; }
@@ -467,6 +583,12 @@ export function redirectPage(destinationURL, hostname, analytics = '', banners =
       var DEST = "${destinationURL}";
       var QUICK_MS = ${QUICK_REDIRECT_SECONDS * 1000};
       function go() { window.location.replace(DEST); }
+      var timer = null;
+      function later(ms) { timer = setTimeout(go, ms); }
+      // The teaser links to the home page; clicking it must cancel the redirect.
+      document.addEventListener("click", function(e) {
+        if (e.target.closest && e.target.closest("#teaser")) clearTimeout(timer);
+      });
 ${banner ? `      var KEY = "ping_shown_at";
       var WINDOW_MS = ${BANNER_WINDOW_MS};
       var BANNER_MS = ${BANNER_DELAY_SECONDS * 1000};
@@ -483,7 +605,7 @@ ${banner ? `      var KEY = "ping_shown_at";
       }
       if (Date.now() - readShown() < WINDOW_MS) {
         // Banner already shown this hour — quick redirect, no iframe loaded.
-        setTimeout(go, QUICK_MS);
+        later(QUICK_MS);
         return;
       }
       writeShown(Date.now());
@@ -492,13 +614,14 @@ ${banner ? `      var KEY = "ping_shown_at";
         var f = document.getElementById("banner");
         if (f) f.src = f.getAttribute("data-src");
       });
-      setTimeout(go, BANNER_MS);` : `      setTimeout(go, QUICK_MS);`}
+      later(BANNER_MS);` : `      later(QUICK_MS);`}
     })();
   </script>
 </head>
 <body>
   <div class="card">
-    <p class="redirect-message">Taking you to the Dotabuff profile…</p>${banner ? `
+    <p class="redirect-message">Taking you to the Dotabuff profile…</p>
+    ${teaserHtml}${banner ? `
     <div class="banner-wrap">
       <p class="sub">${caption}</p>
       <iframe id="banner" class="banner-embed" data-src="${banner.src}" title="Live Dota 2 server ping" loading="eager" referrerpolicy="no-referrer"></iframe>

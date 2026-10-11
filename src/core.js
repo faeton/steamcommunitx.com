@@ -1,4 +1,5 @@
 import { analyticsSnippet, resolveBanners, indexPage, errorPage, redirectPage } from './pages.js';
+import { pickLang } from './client/feed-shared.js';
 
 // Helper functions for API key management
 export function getConfiguredApiKeys(env) {
@@ -191,6 +192,48 @@ export function convertToDota2Id(steamId) {
 //   { kind: 'redirect-base' }              — empty linktype/linkid
 //   { kind: 'unknown', linktype, linkid }  — linktype not in whitelist
 //   { kind: 'id' | 'profiles', value }     — recognized route, value is decoded
+const STEAM64_BASE = 76561197960265728n;
+
+export function accountIdToSteamId64(accountId) {
+  const s = String(accountId ?? '').trim();
+  if (!/^\d{1,10}$/.test(s)) return null;
+  return (BigInt(s) + STEAM64_BASE).toString();
+}
+
+// Any supported profile ID form (SteamID64, [U:1:x], U:1:x) → SteamID64.
+export function toSteamId64(value) {
+  const s = String(value ?? '').trim();
+  if (/^\d{17}$/.test(s)) return s;
+  const m = s.match(/^\[?U:1:(\d+)\]?$/i);
+  return m ? accountIdToSteamId64(m[1]) : null;
+}
+
+// Link-preview bots and crawlers fetch profile URLs too; only real page views
+// should show up in the recent-checks feed.
+const BOT_UA_RE = /bot|crawl|spider|preview|discord|telegram|whatsapp|slack|facebookexternalhit|twitterbot|skype|embed/i;
+
+export function isRealBrowser(request) {
+  if (request.method !== 'GET') return false;
+  if (!(request.headers.get('accept') || '').includes('text/html')) return false;
+  const ua = request.headers.get('user-agent') || '';
+  return ua.length > 0 && !BOT_UA_RE.test(ua);
+}
+
+// Rate-limit key for the feed. The salt is random, in memory only, and rotates
+// daily, so the hash cannot be reversed or linked across days. IPs are never
+// stored.
+let saltDay = '';
+let salt = '';
+export async function ipHash(ip, now = Date.now()) {
+  const day = new Date(now).toISOString().slice(0, 10);
+  if (day !== saltDay) {
+    saltDay = day;
+    salt = crypto.randomUUID();
+  }
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${salt}|${ip || ''}`));
+  return Array.from(new Uint8Array(digest).slice(0, 8), b => b.toString(16).padStart(2, '0')).join('');
+}
+
 export function parseRoute(pathname) {
   if (pathname === '/favicon.ico') return { kind: 'favicon' };
   if (pathname === '/') return { kind: 'home' };
@@ -215,11 +258,13 @@ export function parseRoute(pathname) {
 export async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
   const { pathname, hostname } = url;
+  if (env.FEED && pathname.startsWith('/api/')) return env.FEED.handle(request);
   const route = parseRoute(pathname);
   if (route.kind === 'favicon') return handleFavicon();
   const analytics = analyticsSnippet(env);
+  const lang = pickLang(request.headers.get('accept-language'));
   if (route.kind === 'home') {
-    return new Response(indexPage(hostname, analytics), {
+    return new Response(indexPage(hostname, analytics, { feed: Boolean(env.FEED), lang }), {
       status: 200,
       headers: { 'Content-Type': 'text/html', 'Cache-Control': 'max-age=3600' }
     });
@@ -235,11 +280,13 @@ export async function handleRequest(request, env, ctx) {
   }
   try {
     let linkid;
+    let steamId64 = null;
     if (route.kind === 'id') {
-      const steamId64 = await getId(route.value, env);
+      steamId64 = await getId(route.value, env);
       linkid = steamId64 ? convertToDota2Id(steamId64) : null;
     } else {
       linkid = convertToDota2Id(route.value);
+      steamId64 = linkid ? toSteamId64(route.value) : null;
     }
     if (!linkid) {
       return new Response(
@@ -248,9 +295,21 @@ export async function handleRequest(request, env, ctx) {
       );
     }
     const destinationURL = `${base}players/${linkid}`;
+    let teaser = null;
+    if (env.FEED) {
+      // Teaser first: it must reflect earlier visits, not the one being served.
+      try { teaser = env.FEED.teaser(linkid); } catch (e) { console.error("Feed teaser failed:", e); }
+      if (steamId64 && isRealBrowser(request)) {
+        try {
+          env.FEED.recordHit({ steamId64, ipHash: await ipHash(request.headers.get('cf-connecting-ip')) });
+        } catch (e) {
+          console.error("Feed recordHit failed:", e);
+        }
+      }
+    }
     return new Response(
-      redirectPage(destinationURL, hostname, analytics, resolveBanners(env)),
-      { status: 200, headers: { 'Content-Type': 'text/html', 'Cache-Control': 'max-age=300' } }
+      redirectPage(destinationURL, hostname, analytics, resolveBanners(env), { teaser, lang }),
+      { status: 200, headers: { 'Content-Type': 'text/html', 'Cache-Control': env.FEED ? 'no-store' : 'max-age=300' } }
     );
   } catch (error) {
     console.error("Request handling error:", error);
