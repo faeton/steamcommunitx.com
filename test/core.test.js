@@ -478,7 +478,9 @@ test('/api/resolve.json: concurrent lookups of one name share a Steam call; miss
     const name = new URL(url).searchParams.get('vanityurl');
     return Response.json({ response: name === 'sharedname' ? { success: 1, steamid: '76561198123456789' } : { success: 42 } });
   };
-  const env = { STEAM_API_KEY: 'k', FEED: { ...fakeFeed(), allowResolve: () => true } };
+  const store = new Map();
+  const kv = { async get(k) { return store.get(k) ?? null; }, async put(k, v) { store.set(k, v); } };
+  const env = { STEAM_API_KEY: 'k', STEAM_ID_CACHE: kv, FEED: { ...fakeFeed(), allowResolve: () => true } };
   const req = q => new Request(`https://example.com/api/resolve.json?v=${q}`);
   try {
     const [a, b] = await Promise.all([handleRequest(req('sharedname'), env, ctx), handleRequest(req('SharedName'), env, ctx)]);
@@ -508,6 +510,27 @@ test('/api/resolve.json: cached names and cached misses never spend the lookup b
     assert.equal((await handleRequest(req('budgetname'), env, ctx)).status, 200);
     assert.equal((await handleRequest(req('BudgetMiss'), env, ctx)).status, 404);
     assert.equal((await handleRequest(req('newname'), env, ctx)).status, 429);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('vanity misses are cached for a day in STEAM_ID_CACHE and shared by redirects and the watchlist', async () => {
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; return Response.json({ response: { success: 42, message: 'No match' } }); };
+  const puts = [];
+  const store = new Map();
+  const kv = { async get(k) { return store.get(k) ?? null; }, async put(k, v, o) { puts.push([k, v, o?.expirationTtl]); store.set(k, v); } };
+  const env = { STEAM_API_KEY: 'k', STEAM_ID_CACHE: kv, FEED: { ...fakeFeed(), allowResolve: () => false } };
+  try {
+    const first = await handleRequest(new Request('https://example.com/id/ghostname', { headers: BROWSER }), env, ctx);
+    assert.equal(first.status, 404);
+    assert.deepEqual(puts, [['steamid:ghostname', '-', 86400]]);
+    assert.equal((await handleRequest(new Request('https://example.com/id/GhostName', { headers: BROWSER }), env, ctx)).status, 404);
+    // Over budget, yet the cached miss still answers.
+    assert.equal((await handleRequest(new Request('https://example.com/api/resolve.json?v=ghostname'), env, ctx)).status, 404);
+    assert.equal(calls, 1);
   } finally {
     globalThis.fetch = realFetch;
   }

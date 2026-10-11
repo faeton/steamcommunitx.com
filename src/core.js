@@ -67,12 +67,19 @@ const FAVICON_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABGdBTUEA
 
 const base = "https://www.dotabuff.com/";
 
+// A cached "-" means Steam answered "No match" recently. Names are cheap to
+// store, so known names live a month and misses a day (a name can be taken).
+const VANITY_MISS = '-';
+const VANITY_HIT_TTL = 30 * 24 * 60 * 60;
+const VANITY_MISS_TTL = 24 * 60 * 60;
+
 async function getId(vanityUrl, env) {
   const normalizedVanity = vanityUrl.toLowerCase().trim();
   const cacheKey = `steamid:${normalizedVanity}`;
   try {
     if (env.STEAM_ID_CACHE) {
       const cachedId = await env.STEAM_ID_CACHE.get(cacheKey);
+      if (cachedId === VANITY_MISS) return null;
       if (cachedId) {
         console.log(`Cache hit for ${normalizedVanity}`);
         return cachedId;
@@ -133,6 +140,9 @@ async function getId(vanityUrl, env) {
       // failure, so no retries or key rotation.
       if (data?.response?.success === 42) {
         console.log(`No Steam ID found for vanity URL: ${normalizedVanity}`);
+        if (env.STEAM_ID_CACHE) {
+          try { await env.STEAM_ID_CACHE.put(cacheKey, VANITY_MISS, { expirationTtl: VANITY_MISS_TTL }); } catch (e) { console.error("Cache write error:", e); }
+        }
         return null;
       }
       if (data?.response?.success !== 1) {
@@ -146,8 +156,7 @@ async function getId(vanityUrl, env) {
       }
       if (env.STEAM_ID_CACHE) {
         try {
-          const oneMonthInSeconds = 30 * 24 * 60 * 60;
-          await env.STEAM_ID_CACHE.put(cacheKey, steamId, { expirationTtl: oneMonthInSeconds });
+          await env.STEAM_ID_CACHE.put(cacheKey, steamId, { expirationTtl: VANITY_HIT_TTL });
           console.log(`Cached ${normalizedVanity} -> ${steamId} for 30 days`);
         } catch (e) {
           console.error("Cache write error:", e);
@@ -284,25 +293,14 @@ function jsonResponse(data, status = 200, headers = {}) {
 }
 
 // Watchlist "+ ID" box: a vanity name (or /id/<name> URL) → Dota id. One
-// Steam call per add, never on render. Successful names are cached by getId;
-// here misses are remembered for a while and concurrent lookups of one name
-// share a single Steam call.
-const RESOLVE_MISS_MS = 10 * 60 * 1000;
-const resolveMisses = new Map(); // name -> expiry
-const resolving = new Map();     // name -> pending getId promise
+// Steam call per add, never on render; getId caches hits and misses, and
+// concurrent lookups of one name share a single Steam call.
+const resolving = new Map(); // name -> pending getId promise
 
 function lookupVanity(name, env) {
   const key = name.toLowerCase();
-  const missUntil = resolveMisses.get(key);
-  if (missUntil && missUntil > Date.now()) return Promise.resolve(null);
   if (resolving.has(key)) return resolving.get(key);
-  const p = getId(key, env).then(id => {
-    if (!id) {
-      if (resolveMisses.size > 10000) resolveMisses.clear();
-      resolveMisses.set(key, Date.now() + RESOLVE_MISS_MS);
-    }
-    return id;
-  }).finally(() => resolving.delete(key));
+  const p = getId(key, env).finally(() => resolving.delete(key));
   resolving.set(key, p);
   return p;
 }
@@ -314,12 +312,9 @@ async function resolveVanity(request, env) {
   // Known names and recent misses answer from the caches without spending the
   // lookup budget; only a real Steam call counts against it.
   let steamId64 = null;
-  const missUntil = resolveMisses.get(key);
-  const known = missUntil && missUntil > Date.now();
-  if (!known) {
-    try { steamId64 = env.STEAM_ID_CACHE ? await env.STEAM_ID_CACHE.get(`steamid:${key}`) : null; } catch { steamId64 = null; }
-  }
-  if (known || steamId64) {
+  try { steamId64 = env.STEAM_ID_CACHE ? await env.STEAM_ID_CACHE.get(`steamid:${key}`) : null; } catch { steamId64 = null; }
+  if (steamId64) {
+    if (steamId64 === VANITY_MISS) steamId64 = null;
     const dotaId = steamId64 ? convertToDota2Id(steamId64) : null;
     return dotaId ? jsonResponse({ dotaId: String(dotaId) }) : jsonResponse({ error: 'no match' }, 404);
   }

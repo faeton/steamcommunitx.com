@@ -3,6 +3,13 @@
 All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.5.3] - 2026-10-11
+
+### Changed
+- Unknown vanity names ("No match") are cached for 24 hours next to the known
+  ones (30 days), so repeated lookups — redirects and the watchlist box alike
+  — no longer reach Steam; misses survive restarts.
+
 ## [2.5.2] - 2026-10-11
 
 ### Fixed
